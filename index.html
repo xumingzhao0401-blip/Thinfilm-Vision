@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.0</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0c0c0e; --card-bg: #15151e; --accent-color: #0076ff;
+            --text-color: #e3e3e6; --border-color: #24242c; --danger-color: #ff3b30; 
+            --warning-color: #ff9500; --success-color: #34c759;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 10px;
+            display: flex; flex-direction: column; height: 100vh; box-sizing: border-box;
+            user-select: none;
+        }
+        header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 5px; margin-bottom: 6px; }
+        h1 { margin: 0; font-size: 1.15rem; color: #fff; letter-spacing: 0.5px; }
+        header p { margin: 0; font-size: 0.72rem; color: #8e8e93; }
+        .top-colormap-banner {
+            background: #1e1e26; border: 1px solid var(--border-color); border-radius: 6px;
+            padding: 6px 12px; margin-bottom: 8px; box-sizing: border-box;
+        }
+        .colormap-container { position: relative; width: 100%; height: 24px; border: 1px solid #3e3e46; border-radius: 4px; }
+        #colormap-canvas { width: 100%; height: 100%; display: block; }
+        .indicator-line {
+            position: absolute; top: -3px; height: 30px; width: 3px; background: #fff;
+            box-shadow: 0 0 6px #000; pointer-events: none; transform: translateX(-50%);
+        }
+        .indicator-line::after { content: '▼'; position: absolute; top: -12px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 8px; }
+        .axis-labels { display: flex; justify-content: space-between; font-size: 0.65rem; color: #8e8e93; margin-top: 3px; font-family: monospace; }
+        .main-container { display: grid; grid-template-columns: 390px 1fr 370px; gap: 8px; flex: 1; min-height: 0; }
+        .panel {
+            background-color: var(--card-bg); border: 1px solid var(--border-color);
+            border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto;
+        }
+        .panel-title { font-size: 0.82rem; font-weight: bold; color: #fff; border-left: 3px solid var(--accent-color); padding-left: 6px; display: flex; justify-content: space-between; align-items: center; }
+        .priority-bound-box { border: 1px dashed var(--warning-color); background: rgba(255, 149, 0, 0.01); padding: 8px; border-radius: 6px; }
+        .bound-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+        .bound-inputs div { display: flex; flex-direction: column; }
+        .bound-inputs label { font-size: 0.68rem; color: #8e8e93; margin-bottom: 2px; }
+        .bound-inputs input { background: #0f0f12; border: 1px solid var(--border-color); color: #fff; padding: 4px; border-radius: 4px; text-align: center; font-size: 0.72rem; }
+        .stack-list { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto; }
+        .stack-layer-item { background: #1e1e26; border: 1px solid var(--border-color); padding: 6px; border-radius: 6px; display: flex; flex-direction: column; gap: 4px; }
+        .layer-header { display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; font-weight: bold; }
+        .layer-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+        .layer-input-sub { display: flex; flex-direction: column; }
+        .layer-input-sub label { font-size: 0.65rem; color: #8e8e93; }
+        .layer-input-sub input { background: #0f0f12; border: 1px solid var(--border-color); color: #fff; padding: 3px; border-radius: 4px; font-size: 0.7rem; }
+        .wafer-map-wrapper { display: flex; flex-direction: column; align-items: center; background: #1e1e26; padding: 6px; border-radius: 6px; border: 1px solid var(--border-color); position: relative; }
+        #wafer-canvas { background: #0f0f12; border-radius: 50%; box-shadow: inset 0 0 10px rgba(0,0,0,0.9); cursor: pointer; }
+        .map-legend-bar { width: 100%; height: 8px; margin-top: 6px; border-radius: 2px; border: 1px solid #333; }
+        .legend-labels { display: flex; justify-content: space-between; width: 100%; font-size: 0.62rem; color: #8e8e93; margin-top: 2px; font-family: monospace; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; width: 100%; margin-top: 6px; text-align: center; font-size: 0.7rem; }
+        .stats-card { background: #13131a; padding: 4px; border-radius: 4px; border: 1px solid var(--border-color); }
+        .stats-val { font-weight: bold; color: var(--accent-color); font-size: 0.75rem; margin-top: 2px; }
+        .progress-bar-container { width: 100%; background: #222; height: 14px; border-radius: 4px; display: none; overflow: hidden; position: relative; text-align: center; margin-bottom: 4px; }
+        .progress-bar-fill { background: var(--success-color); height: 100%; width: 0%; position: absolute; left: 0; top: 0; transition: width 0.05s linear; }
+        .progress-text { position: absolute; width: 100%; left: 0; top: 0; font-size: 0.68rem; font-weight: bold; color: #fff; line-height: 14px; z-index: 2; }
+        .status-alarm-bar { padding: 5px; border-radius: 4px; font-size: 0.72rem; font-weight: bold; text-align: center; display: none; }
+        .alarm-danger { background: rgba(255,59,48,0.1); color: var(--danger-color); border: 1px solid var(--danger-color); }
+        .alarm-success { background: rgba(52,199,89,0.1); color: var(--success-color); border: 1px solid var(--success-color); }
+        textarea { width: 100%; height: 75px; background: #0f0f12; border: 1px solid var(--border-color); color: #fff; border-radius: 4px; padding: 5px; box-sizing: border-box; font-family: monospace; font-size: 0.68rem; resize: none; line-height: 1.2; }
+        button { background: var(--accent-color); color: #fff; border: none; padding: 5px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.72rem; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+        button:hover { background: #005ecb; }
+        .chart-container { position: relative; flex: 1; min-height: 0; }
+        .log-area { font-family: monospace; font-size: 0.68rem; background: #0f0f12; padding: 5px; border-radius: 4px; color: #34c759; max-height: 95px; overflow-y: auto; white-space: pre-wrap; flex: 1; border: 1px solid var(--border-color); }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>ThinFilm-Vision 量测分析系统 V4.0</h1>
+    <p>自适应分析台：高密度全谱数据插值 · 理论模型 LUT 并行加速 · 颜色边界约束防伪解</p>
+</header>
+
+<div class="top-colormap-banner">
+    <div class="colormap-container">
+        <canvas id="colormap-canvas" height="24"></canvas>
+        <div class="indicator-line" id="map-indicator" style="left: 0%;"></div>
+    </div>
+    <div class="axis-labels">
+        <span>0 nm</span><span>100 nm</span><span>200 nm</span><span>300 nm</span><span>400 nm</span><span>500 nm</span><span>600 nm</span><span>700 nm</span><span>800 nm</span><span>900 nm</span><span>1000 nm</span>
+    </div>
+</div>
+
+<div class="main-container">
+    <div class="panel">
+        <div class="panel-title">1. 工艺限制窗口与监控规格 (SPC)</div>
+        <div class="priority-bound-box">
+            <div class="bound-inputs" style="margin-bottom: 4px;">
+                <div><label>拟合窗口下限 (Min nm)</label><input type="number" id="param-bound-min" value="150"></div>
+                <div><label>拟合窗口上限 (Max nm)</label><input type="number" id="param-bound-max" value="450"></div>
+            </div>
+            <div class="bound-inputs">
+                <div><label>控制下限 LSL (nm)</label><input type="number" id="spc-lsl" value="285"></div>
+                <div><label>控制上限 USL (nm)</label><input type="number" id="spc-usl" value="315"></div>
+            </div>
+        </div>
+
+        <div class="panel-title">2. 薄膜参数配置 (Cauchy 色散模型)</div>
+        <div class="stack-list" id="stack-container"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+            <button id="btn-add-layer" style="background-color: #1e1e24; border: 1px solid var(--border-color);">+ 新增常规膜</button>
+            <button id="btn-preset-sio2" style="background-color: #1e1e24; border: 1px solid var(--border-color);">载入标准 SiO₂ 膜</button>
+        </div>
+        
+        <div class="panel-title">3. 系统监控与门限配置</div>
+        <div class="input-group" style="background: #1a1a24; padding: 4px 8px; border-radius: 4px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 0.72rem; margin-bottom: 4px;">
+            <div>
+                <label style="color:#b0b0b8; font-size: 0.65rem;">允许最大 MSE 阈值</label>
+                <input type="number" id="cfg-max-mse" value="0.003" step="0.001" style="width: 100%; background:#000; border:1px solid #333; color:#fff; text-align:center; border-radius:4px; font-size:0.7rem; box-sizing:border-box; padding:2px;">
+            </div>
+            <div>
+                <label style="color:#b0b0b8; font-size: 0.65rem;">最大 1σ 确定度 (nm)</label>
+                <input type="number" id="cfg-max-sigma" value="4.5" step="0.5" style="width: 100%; background:#000; border:1px solid #333; color:#fff; text-align:center; border-radius:4px; font-size:0.7rem; box-sizing:border-box; padding:2px;">
+            </div>
+        </div>
+        <div class="input-group" style="background: #1a1a24; padding: 4px 8px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem;">
+            <label style="margin: 0; color:#b0b0b8; font-size: 0.65rem;">色彩防御控制门限 (ΔE 阈值)</label>
+            <input type="number" id="cfg-max-de" value="6.5" step="0.5" style="width: 60px; background:#000; border:1px solid #333; color:#fff; text-align:center; border-radius:4px; font-size:0.7rem; padding:2px;">
+        </div>
+        <div class="status-alarm-bar alarm-danger" id="alarm-box-danger">⚠️ 低置信度告警：均方残差超标或点位出界，请检查工艺匹配度</div>
+        <div class="status-alarm-bar alarm-success" id="alarm-box-success">✅ 高置信度闭环：全晶圆工艺拟合质量优异</div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">4. 物理特性诊断：全谱线匹配与双轴残差图 (1nm 栅格)</div>
+        <div class="chart-container">
+            <canvas id="diagnosticChart"></canvas>
+        </div>
+    </div>
+
+    <div class="panel" style="display: flex; flex-direction: column;">
+        <div class="panel-title">5. 2D 晶圆厚度均匀性谱图 (Wafer Map)</div>
+        <div class="wafer-map-wrapper">
+            <canvas id="wafer-canvas" width="140" height="140"></canvas>
+            <div class="map-legend-bar" id="map-legend"></div>
+            <div class="legend-labels"><span id="lg-min">- nm</span><span id="lg-mid">- nm</span><span id="lg-max">- nm</span></div>
+            
+            <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px; width: 100%; background: #13131a; padding: 4px; border-radius: 4px; border: 1px solid #24242c;">
+                <div id="wafer-color" style="width: 14px; height: 14px; border-radius: 50%; border: 1px solid #fff; background-color: #fff; transition: background 0.1s;"></div>
+                <div id="hex-disp" style="font-size: 0.68rem; font-family: monospace; font-weight: bold; color: #fff;">#FFFFFF (0.0 nm)</div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stats-card"><div>晶圆均值</div><div class="stats-val" id="st-avg">-</div></div>
+                <div class="stats-card"><div>工艺极差</div><div class="stats-val" id="st-range">-</div></div>
+                <div class="stats-card"><div>制程能力 Cpk</div><div class="stats-val" id="st-cpk" style="color:var(--success-color);">-</div></div>
+            </div>
+        </div>
+
+        <div class="panel-title">6. 多点产线测试数据导入</div>
+        <div class="progress-bar-container" id="prog-container">
+            <div class="progress-bar-fill" id="prog-fill"></div>
+            <div class="progress-text" id="prog-text">处理中: 0 / 0 点</div>
+        </div>
+        <textarea id="csv-import" placeholder="点ID   X坐标   Y坐标   380nm反射率   430nm反射率 ... (稀疏模式支持9点，密集全谱输入支持401点)"></textarea>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+            <button id="btn-load-sample" style="background-color: #24242c;">加载 17点 厂内样本</button>
+            <button id="btn-batch-fit" style="background-color: #34c759;">⚡ 启动多线程反演</button>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+            <button id="btn-recipe-save" style="background-color: #1a1a24; font-size: 0.68rem; border:1px solid #333;">💾 保存当前配方</button>
+            <button id="btn-recipe-load" style="background-color: #1a1a24; font-size: 0.68rem; border:1px solid #333;">📂 加载本地配方</button>
+            <input type="file" id="file-recipe-input" style="display: none;" accept=".json">
+        </div>
+
+        <div class="panel-title">7. 多谷自适应寻优日志</div>
+        <div class="log-area" id="log-box">等待输入矩阵流片数据...</div>
+    </div>
+</div>
+
+<script>
+// =========================================================================
+// 1. 全局物理代数内核定义 (主线程复数)
+// =========================================================================
+const Cpx = {
+    create: (r, i=0) => ({ r, i }),
+    add: (a, b) => ({ r: a.r + b.r, i: a.i + b.i }),
+    sub: (a, b) => ({ r: a.r - b.r, i: a.i - b.i }),
+    mul: (a, b) => ({ r: a.r * b.r - a.i * b.i, i: a.r * b.i + a.i * b.r }),
+    div: (a, b) => { let d = b.r * b.r + b.i * b.i; return { r: (a.r * b.r + a.i * b.i)/d, i: (a.i * b.r - a.r * b.i)/d }; },
+    sin: (a) => ({ r: Math.sin(a.r) * Math.cosh(a.i), i: Math.cos(a.r) * Math.sinh(a.i) }),
+    cos: (a) => ({ r: Math.cos(a.r) * Math.cosh(a.i), i: -Math.sin(a.r) * Math.sinh(a.i) }),
+    mag2: (a) => a.r * a.r + a.i * a.i
+};
+
+function matMul2x2(A, B) {
+    return [
+        [Cpx.add(Cpx.mul(A[0][0], B[0][0]), Cpx.mul(A[0][1], B[1][0])), Cpx.add(Cpx.mul(A[0][0], B[0][1]), Cpx.mul(A[0][1], B[1][1]))],
+        [Cpx.add(Cpx.mul(A[1][0], B[0][0]), Cpx.mul(A[1][1], B[1][0])), Cpx.add(Cpx.mul(A[1][0], B[0][1]), Cpx.mul(A[1][1], B[1][1]))]
+    ];
+}
+
+const Grid = {
+    min: 380, max: 780, length: 401,
+    getConstants: function() {
+        if (this.cache) return this.cache;
+        let d65 = [], cmfX = [], cmfY = [], cmfZ = [], siN = [], siK = [];
+        for (let wl = this.min; wl <= this.max; wl++) {
+            let norm = (wl - 560) / 40;
+            cmfY.push(Math.exp(-0.5 * norm * norm));
+            cmfX.push(0.35 * Math.exp(-0.5 * Math.pow((wl - 440)/20,2)) + 1.05 * Math.exp(-0.5 * Math.pow((wl - 590)/35,2)));
+            cmfZ.push(1.6 * Math.exp(-0.5 * Math.pow((wl - 450)/25,2)));
+            d65.push(100 * (1 + 0.002 * (wl - 500)));
+            siN.push(3.5 + 0.15 * Math.pow(400 / wl, 2));
+            siK.push(0.01 + 0.1 * Math.pow(400 / wl, 4));
+        }
+        return this.cache = { d65, cmfX, cmfY, cmfZ, siN, siK };
+    }
+};
+
+function runTMM(stack, wl, idx) {
+    let sysM = [[Cpx.create(1), Cpx.create(0)], [Cpx.create(0), Cpx.create(1)]];
+    for (let i = 0; i < stack.length; i++) {
+        const n_wl = stack[i].A + (stack[i].B / Math.pow(wl, 2)) + (stack[i].C / Math.pow(wl, 4));
+        const q_j = Cpx.create(n_wl, -stack[i].k);
+        const delta = Cpx.create((2 * Math.PI * stack[i].d / wl) * n_wl, -(2 * Math.PI * stack[i].d / wl) * stack[i].k);
+        const cosD = Cpx.cos(delta); const sinD = Cpx.sin(delta);
+        const M_j = [[cosD, Cpx.div(Cpx.mul(Cpx.create(0,1), sinD), q_j)], [Cpx.mul(Cpx.mul(Cpx.create(0,1), q_j), sinD), cosD]];
+        sysM = matMul2x2(sysM, M_j);
+    }
+    const tables = Grid.getConstants();
+    const q_sub = Cpx.create(tables.siN[idx], -tables.siK[idx]);
+    const B = Cpx.add(sysM[0][0], Cpx.mul(sysM[0][1], q_sub)); const C = Cpx.add(sysM[1][0], Cpx.mul(sysM[1][1], q_sub));
+    return Cpx.mag2(Cpx.div(Cpx.sub(B, C), Cpx.add(B, C)));
+}
+
+function computeLab(stack) {
+    let X = 0, Y = 0, Z = 0, normY = 0; const tables = Grid.getConstants();
+    for (let i = 0; i < Grid.length; i++) {
+        let R = runTMM(stack, Grid.min + i, i); const illum = tables.d65[i];
+        X += R * illum * tables.cmfX[i]; Y += R * illum * tables.cmfY[i]; Z += R * illum * tables.cmfZ[i]; normY += illum * tables.cmfY[i];
+    }
+    X /= normY; Y /= normY; Z /= normY;
+    const f = (t) => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
+    return { L: 116 * f(Y) - 16, a: 500 * (f(X/0.95047) - f(Y)), b: 200 * (f(Y) - f(Z/1.08883)) };
+}
+
+function labToHex(L, a, b) {
+    let y = (L + 16) / 116, x = a / 500 + y, z = y - b / 200;
+    const fInv = (t) => t > 0.206896 ? Math.pow(t, 3) : (t - 16/116) / 7.787037;
+    let X = fInv(x) * 0.95047, Y = fInv(y) * 1.00000, Z = fInv(z) * 1.08883;
+    let rl = 3.2404542*X - 1.5371385*Y - 0.4985314*Z;
+    let gl = -0.9692660*X + 1.8760108*Y + 0.0415560*Z;
+    let bl = 0.0556434*X - 0.2040259*Y + 1.0572252*Z;
+    const g = (v) => Math.max(0, Math.min(255, Math.round((v <= 0.0031308 ? 12.92 * v : 1.055 * Math.pow(v, 1/2.4) - 0.055) * 255)));
+    return `#${((1 << 24) + (g(rl) << 16) + (g(gl) << 8) + g(bl)).toString(16).slice(1).toUpperCase()}`;
+}
+
+function getViridisColor(ratio) {
+    const points = [
+        {r: 68,  g: 1,   b: 84}, {r: 49,  g: 104, b: 142}, {r: 33,  g: 145, b: 140}, {r: 94,  g: 201, b: 98}, {r: 253, g: 231, b: 37}
+    ];
+    ratio = Math.max(0, Math.min(1, ratio));
+    let segment = ratio * 4; let i = Math.floor(segment);
+    if (i >= 4) return `rgb(${points[4].r}, ${points[4].g}, ${points[4].b})`;
+    let t = segment - i; let p0 = points[i], p1 = points[i+1];
+    return `rgb(${Math.round(p0.r+(p1.r-p0.r)*t)}, ${Math.round(p0.g+(p1.g-p0.g)*t)}, ${Math.round(p0.b+(p1.b-p0.b)*t)})`;
+}
+
+// =========================================================================
+// 2. 全局状态与 UI 控制
+// =========================================================================
+let currentLayers = [{ name: "氧化掩膜层 (SiO₂)", A: 1.458, B: 0.0035, C: 0.0, k: 0.0, d: 300, isTarget: true }];
+let batchPoints = [];
+let activePointIdx = 0;
+let diagnosticChart = null;
+let colorMapCache = [];
+
+function evaluateSinglePointStatus(mse, sigma, thickValue) {
+    const lsl = parseFloat(document.getElementById('spc-lsl').value) || 0;
+    const usl = parseFloat(document.getElementById('spc-usl').value) || 1000;
+    const maxMseConfig = parseFloat(document.getElementById('cfg-max-mse').value) || 0.003;
+    const maxSigmaConfig = parseFloat(document.getElementById('cfg-max-sigma').value) || 4.5;
+    let isFaulty = mse > maxMseConfig || sigma > maxSigmaConfig || thickValue < lsl || thickValue > usl;
+    document.getElementById('alarm-box-danger').style.display = isFaulty ? 'block' : 'none';
+    document.getElementById('alarm-box-success').style.display = isFaulty ? 'none' : 'block';
+}
+
+function precomputeBannerMap() {
+    colorMapCache = [];
+    let scanStack = JSON.parse(JSON.stringify(currentLayers));
+    let fIdx = scanStack.findIndex(l => l.isTarget); if(fIdx === -1) fIdx = 0;
+    for(let d=0; d<=1000; d+=2) {
+        scanStack[fIdx].d = d;
+        let lab = computeLab(scanStack);
+        colorMapCache.push(labToHex(lab.L, lab.a, lab.b));
+    }
+}
+
+function drawBanner() {
+    const canvas = document.getElementById('colormap-canvas');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = canvas.parentElement.clientWidth;
+    for(let x=0; x<width; x++) {
+        let idx = Math.floor((x / width) * (colorMapCache.length - 1));
+        ctx.fillStyle = colorMapCache[idx] || '#000';
+        ctx.fillRect(x, 0, 1, canvas.height);
+    }
+}
+
+function renderLayerStack() {
+    const container = document.getElementById('stack-container');
+    if(!container) return;
+    container.innerHTML = '';
+    currentLayers.forEach((layer, idx) => {
+        const i = idx;
+        const div = document.createElement('div'); div.className = 'stack-layer-item';
+        div.innerHTML = `
+            <div class="layer-header">
+                <span>层 #${i+1}: ${layer.name}</span>
+                <label style="font-size:0.65rem; color:#34c759;"><input type="radio" name="target-radio" ${layer.isTarget?'checked':''} onchange="switchFitTarget(${i})"> 激活拟合自变量</label>
+            </div>
+            <div class="layer-controls">
+                <div class="layer-input-sub"><label>Cauchy A</label><input type="number" step="0.001" id="a-${i}" value="${layer.A}"></div>
+                <div class="layer-input-sub"><label>Cauchy B</label><input type="number" step="0.0001" id="b-${i}" value="${layer.B}"></div>
+            </div>
+            <div class="layer-controls" style="margin-top: 2px;">
+                <div class="layer-input-sub"><label>Cauchy C (×10⁻⁴)</label><input type="number" step="0.0001" id="c-${i}" value="${layer.C}"></div>
+                <div class="layer-input-sub"><label>消光系数 k</label><input type="number" step="0.0001" id="k-${i}" value="${layer.k}"></div>
+            </div>
+            <div style="margin-top:2px;" class="layer-input-sub">
+                <label>分析厚度 (nm)</label><input type="number" id="d-${i}" value="${layer.d}">
+            </div>`;
+        container.appendChild(div);
+        
+        ['a-'+i, 'b-'+i, 'c-'+i, 'k-'+i, 'd-'+i].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('input', () => {
+                layer.A = parseFloat(document.getElementById('a-'+i)?.value) || 1.0;
+                layer.B = parseFloat(document.getElementById('b-'+i)?.value) || 0;
+                layer.C = parseFloat(document.getElementById('c-'+i)?.value) || 0;
+                layer.k = parseFloat(document.getElementById('k-'+i)?.value) || 0;
+                layer.d = parseFloat(document.getElementById('d-'+i)?.value) || 0;
+                clearTimeout(window.refreshTimer);
+                window.refreshTimer = setTimeout(() => { precomputeBannerMap(); drawBanner(); updateDiagnosticUI(); }, 40);
+            });
+        });
+    });
+}
+
+function switchFitTarget(idx) {
+    currentLayers.forEach((l, i) => l.isTarget = (i === idx));
+    renderLayerStack();
+}
+
+function interpolateTo1nmGrid(sparseData) {
+    let fullSpectrum = new Float32Array(Grid.length);
+    let wls = Object.keys(sparseData).map(Number).sort((a,b)=>a-b);
+    if (wls.length === 0) return fullSpectrum;
+    
+    for(let i=0; i<Grid.length; i++) {
+        let targetWl = Grid.min + i;
+        if(sparseData[targetWl] !== undefined) { fullSpectrum[i] = sparseData[targetWl]; continue; }
+        if(targetWl <= wls[0]) { fullSpectrum[i] = sparseData[wls[0]]; continue; }
+        if(targetWl >= wls[wls.length-1]) { fullSpectrum[i] = sparseData[wls[wls.length-1]]; continue; }
+        let idx = wls.findIndex(w => w > targetWl);
+        if(idx === -1) break;
+        let w0 = wls[idx-1], w1 = wls[idx];
+        fullSpectrum[i] = sparseData[w0] + (sparseData[w1] - sparseData[w0]) * (targetWl - w0) / (w1 - w0);
+    }
+    return fullSpectrum;
+}
+
+function initDiagnosticChart() {
+    if (typeof Chart === 'undefined') {
+        console.error('Chart.js 未加载，诊断图表降级为隐藏防护状态');
+        return;
+    }
+    const ctx = document.getElementById('diagnosticChart')?.getContext('2d');
+    if(!ctx) return;
+    let labels = []; for (let w = 380; w <= 780; w++) labels.push(w + "nm");
+    diagnosticChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                { label: '理论 TMM 仿真曲线 (左轴)', data: [], borderColor: '#0076ff', borderWidth: 2, pointRadius: 0, yAxisID: 'y' },
+                { label: '机台高密度插值谱线 (左轴)', data: [], borderColor: '#ff9500', borderWidth: 1.5, borderDash: [3, 3], pointRadius: 0, yAxisID: 'y' },
+                { label: '全谱拟合残差 (右轴)', data: [], borderColor: 'rgba(255, 59, 48, 0.4)', backgroundColor: 'rgba(255, 59, 48, 0.05)', fill: true, borderWidth: 1, pointRadius: 0, yAxisID: 'y1' }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                y: { type: 'linear', display: true, position: 'left', min: 0, max: 1, title: { display: true, text: '反射率' } },
+                y1: { type: 'linear', display: true, position: 'right', min: -0.06, max: 0.06, title: { display: true, text: '残差' }, grid: { drawOnChartArea: false } }
+            },
+            plugins: { legend: { labels: { color: '#fff', font: { size: 9 } } } }
+        }
+    });
+}
+
+function updateDiagnosticUI() {
+    let fIdx = currentLayers.findIndex(l => l.isTarget); if(fIdx === -1) fIdx = 0;
+    let percent = Math.min(100, Math.max(0, (currentLayers[fIdx].d / 1000) * 100));
+    document.getElementById('map-indicator').style.left = percent + "%";
+
+    let theoSpec = [], residual = [];
+    for(let i=0; i<Grid.length; i++) {
+        let R_sim = runTMM(currentLayers, Grid.min + i, i); theoSpec.push(R_sim);
+        residual.push(batchPoints[activePointIdx] ? batchPoints[activePointIdx].spectrum[i] - R_sim : 0);
+    }
+    if (diagnosticChart) {
+        diagnosticChart.data.datasets[0].data = theoSpec;
+        diagnosticChart.data.datasets[2].data = residual;
+        diagnosticChart.data.datasets[1].data = batchPoints[activePointIdx] ? batchPoints[activePointIdx].spectrum : [];
+        diagnosticChart.update();
+    }
+
+    let lab = computeLab(currentLayers); let hex = labToHex(lab.L, lab.a, lab.b);
+    const waferColor = document.getElementById('wafer-color');
+    if(waferColor) waferColor.style.backgroundColor = hex;
+    const hexDisp = document.getElementById('hex-disp');
+    if(hexDisp) hexDisp.innerText = `${hex} (${currentLayers[fIdx].d.toFixed(1)} nm)`;
+}
+
+function drawWaferMap() {
+    const canvas = document.getElementById('wafer-canvas');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const r = canvas.width / 2; ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const lsl = parseFloat(document.getElementById('spc-lsl')?.value) || 0;
+    const usl = parseFloat(document.getElementById('spc-usl')?.value) || 1000;
+    
+    ctx.beginPath(); ctx.arc(r, r, r - 5, 0, Math.PI * 2); ctx.fillStyle = '#111116'; ctx.fill();
+    ctx.lineWidth = 1.2; ctx.strokeStyle = '#252530'; ctx.stroke();
+    ctx.fillStyle = '#0b0b0d'; ctx.beginPath(); ctx.arc(r, r*2 - 3, 3, 0, Math.PI, true); ctx.fill();
+
+    if(batchPoints.length === 0) return;
+    let thicknesses = batchPoints.map(p => p.fitD);
+    let maxD = Math.max(...thicknesses), minD = Math.min(...thicknesses); let delta = maxD - minD || 1;
+
+    const legendCanvas = document.getElementById('map-legend');
+    document.getElementById('lg-min').innerText = minD.toFixed(1) + " nm";
+    document.getElementById('lg-mid').innerText = ((minD + maxD)/2).toFixed(1) + " nm";
+    document.getElementById('lg-max').innerText = maxD.toFixed(1) + " nm";
+    if(legendCanvas) legendCanvas.style.background = `linear-gradient(to right, rgb(68,1,84), rgb(49,104,142), rgb(33,145,140), rgb(94,201,98), rgb(253,231,37))`;
+
+    batchPoints.forEach((pt, idx) => {
+        let cx = r + (pt.x / 100) * (r - 15); let cy = r - (pt.y / 100) * (r - 15);
+        let ratio = (pt.fitD - minD) / delta;
+        
+        ctx.beginPath(); ctx.arc(cx, cy, idx === activePointIdx ? 5.5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = getViridisColor(ratio); ctx.fill();
+        ctx.lineWidth = idx === activePointIdx ? 1.5 : 0.6;
+        ctx.strokeStyle = idx === activePointIdx ? '#fff' : '#000'; ctx.stroke();
+
+        if(pt.fitD < lsl || pt.fitD > usl) {
+            ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.arc(cx, cy, idx === activePointIdx ? 7.5 : 5.5, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    });
+}
+
+// =========================================================================
+// 3. Web Worker 内联代码
+// =========================================================================
+const dynamicWorkerCodeBlob = `
+    const Cpx = {
+        create: function(r, i) { return { r: r, i: i || 0 }; },
+        add: function(a, b) { return { r: a.r + b.r, i: a.i + b.i }; },
+        sub: function(a, b) { return { r: a.r - b.r, i: a.i - b.i }; },
+        mul: function(a, b) { return { r: a.r * b.r - a.i * b.i, i: a.r * b.i + a.i * b.r }; },
+        div: function(a, b) { let d = b.r * b.r + b.i * b.i; return { r: (a.r * b.r + a.i * b.i)/d, i: (a.i * b.r - a.r * b.i)/d }; },
+        sin: function(a) { return { r: Math.sin(a.r) * Math.cosh(a.i), i: Math.cos(a.r) * Math.sinh(a.i) }; },
+        cos: function(a) { return { r: Math.cos(a.r) * Math.cosh(a.i), i: -Math.sin(a.r) * Math.sinh(a.i) }; },
+        mag2: function(a) { return a.r * a.r + a.i * a.i; }
+    };
+
+    const matMul2x2 = function(A, B) {
+        return [
+            [Cpx.add(Cpx.mul(A[0][0], B[0][0]), Cpx.mul(A[0][1], B[1][0])), Cpx.add(Cpx.mul(A[0][0], B[0][1]), Cpx.mul(A[0][1], B[1][1]))],
+            [Cpx.add(Cpx.mul(A[1][0], B[0][0]), Cpx.mul(A[1][1], B[1][0])), Cpx.add(Cpx.mul(A[1][0], B[0][1]), Cpx.mul(A[1][1], B[1][1]))]
+        ];
+    };
+    
+    function runTMMInWorker(stack, wl, idx, siN, siK) {
+        let sysM = [[Cpx.create(1), Cpx.create(0)], [Cpx.create(0), Cpx.create(1)]];
+        for (let i = 0; i < stack.length; i++) {
+            const n_wl = stack[i].A + (stack[i].B / Math.pow(wl, 2)) + (stack[i].C / Math.pow(wl, 4));
+            const q_j = Cpx.create(n_wl, -stack[i].k);
+            const delta = Cpx.create((2 * Math.PI * stack[i].d / wl) * n_wl, -(2 * Math.PI * stack[i].d / wl) * stack[i].k);
+            const cosD = Cpx.cos(delta); const sinD = Cpx.sin(delta);
+            const M_j = [[cosD, Cpx.div(Cpx.mul(Cpx.create(0,1), sinD), q_j)], [Cpx.mul(Cpx.mul(Cpx.create(0,1), q_j), sinD), cosD]];
+            sysM = matMul2x2(sysM, M_j);
+        }
+        const q_sub = Cpx.create(siN[idx], -siK[idx]);
+        const B = Cpx.add(sysM[0][0], Cpx.mul(sysM[0][1], q_sub)); const C = Cpx.add(sysM[1][0], Cpx.mul(sysM[1][1], q_sub));
+        return Cpx.mag2(Cpx.div(Cpx.sub(B, C), Cpx.add(B, C)));
+    }
+
+    function computeLabInWorker(stack, d65, cmfX, cmfY, cmfZ, siN, siK) {
+        let X = 0, Y = 0, Z = 0, normY = 0;
+        for (let i = 0; i < 401; i++) {
+            let R = runTMMInWorker(stack, 380 + i, i, siN, siK); const illum = d65[i];
+            X += R * illum * cmfX[i]; Y += R * illum * cmfY[i]; Z += R * illum * cmfZ[i]; normY += illum * cmfY[i];
+        }
+        X /= normY; Y /= normY; Z /= normY;
+        const f = (t) => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
+        return { L: 116 * f(Y) - 16, a: 500 * (f(X/0.95047) - f(Y)), b: 200 * (f(Y) - f(Z/1.08883)) };
+    }
+
+    function computeExpLabInWorker(spectrum, d65, cmfX, cmfY, cmfZ) {
+        let X = 0, Y = 0, Z = 0, normY = 0;
+        for (let i = 0; i < 401; i++) {
+            let R = spectrum[i]; const illum = d65[i];
+            X += R * illum * cmfX[i]; Y += R * illum * cmfY[i]; Z += R * illum * cmfZ[i]; normY += illum * cmfY[i];
+        }
+        X /= normY; Y /= normY; Z /= normY;
+        const f = (t) => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
+        return { L: 116 * f(Y) - 16, a: 500 * (f(X/0.95047) - f(Y)), b: 200 * (f(Y) - f(Z/1.08883)) };
+    }
+
+    self.onmessage = function(e) {
+        const { batchPoints, currentLayers, minBound, maxBound, fitIdx, constants, deltaEThresh } = e.data;
+        const gridLen = 401;
+        
+        let lutSpectrum = {}; let lutLab = {};
+        for(let t = minBound; t <= maxBound; t += 1) {
+            let tempStack = JSON.parse(JSON.stringify(currentLayers));
+            tempStack[fitIdx].d = t;
+            let specArr = new Float32Array(gridLen);
+            for(let g=0; g<gridLen; g++) specArr[g] = runTMMInWorker(tempStack, 380 + g, g, constants.siN, constants.siK);
+            lutSpectrum[t] = specArr;
+            lutLab[t] = computeLabInWorker(tempStack, constants.d65, constants.cmfX, constants.cmfY, constants.cmfZ, constants.siN, constants.siK);
+        }
+
+        batchPoints.forEach((pt, pIdx) => {
+            let expLab = computeExpLabInWorker(pt.spectrum, constants.d65, constants.cmfX, constants.cmfY, constants.cmfZ);
+            let bestScanD = minBound, minScanMSE = Infinity;
+            
+            for(let t = minBound; t <= maxBound; t += 1) {
+                let labT = lutLab[t];
+                let dE = Math.sqrt((expLab.L-labT.L)**2 + (expLab.a-labT.a)**2 + (expLab.b-labT.b)**2);
+                if(dE > deltaEThresh) continue; 
+                
+                let sErr = 0;
+                for(let g=0; g<gridLen; g++) { let dF = pt.spectrum[g] - lutSpectrum[t][g]; sErr += dF * dF; }
+                if(sErr < minScanMSE) { minScanMSE = sErr; bestScanD = t; }
+            }
+
+            if(minScanMSE === Infinity) {
+                for(let t = minBound; t <= maxBound; t += 1) {
+                    let sErr = 0;
+                    for(let g=0; g<gridLen; g++) { let dF = pt.spectrum[g] - lutSpectrum[t][g]; sErr += dF * dF; }
+                    if(sErr < minScanMSE) { minScanMSE = sErr; bestScanD = t; }
+                }
+            }
+
+            let currentD = bestScanD; const deltaD = 0.05; let JtJ = 0, finalMSE = 0;
+            let finalStack = JSON.parse(JSON.stringify(currentLayers));
+            
+            for(let iter=0; iter<10; iter++) {
+                JtJ = 0; let Jtf = 0; let errSum = 0;
+                finalStack[fitIdx].d = currentD;
+                let f0 = new Float32Array(gridLen);
+                for(let g=0; g<gridLen; g++) f0[g] = runTMMInWorker(finalStack, 380+g, g, constants.siN, constants.siK);
+                
+                finalStack[fitIdx].d = currentD + deltaD;
+                let fPlus = new Float32Array(gridLen);
+                for(let g=0; g<gridLen; g++) fPlus[g] = runTMMInWorker(finalStack, 380+g, g, constants.siN, constants.siK);
+
+                for(let g=0; g<gridLen; g++) {
+                    let J = (fPlus[g] - f0[g]) / deltaD; let res = pt.spectrum[g] - f0[g];
+                    errSum += res * res; JtJ += J * J; Jtf += J * res;
+                }
+                let step = Jtf / (JtJ + 0.02);
+                if(Math.abs(step) > 8) step = step > 0 ? 8 : -8;
+                currentD += step; finalMSE = errSum / gridLen;
+                if(Math.abs(step) < 0.01) break;
+            }
+
+            pt.fitD = currentD; pt.mse = finalMSE;
+            pt.sigma = JtJ > 0 ? Math.sqrt(finalMSE / JtJ) : 0.5;
+
+            if ((pIdx + 1) % 4 === 0 || (pIdx + 1) === batchPoints.length) {
+                self.postMessage({ type: 'progress', index: pIdx, total: batchPoints.length, point: pt });
+            }
+        });
+        self.postMessage({ type: 'done', results: batchPoints });
+    };
+`;
+
+// =========================================================================
+// 4. 事件绑定与批量处理
+// =========================================================================
+document.getElementById('btn-add-layer').addEventListener('click', () => {
+    if(currentLayers.length >= 5) {
+        alert("已达到最大层数限制 (5层)");
+        return;
+    }
+    currentLayers.push({ name: "附加层", A: 2.0, B: 0.01, C: 0, k: 0, d: 50, isTarget: false });
+    renderLayerStack();
+    precomputeBannerMap();
+    drawBanner();
+    updateDiagnosticUI();
+});
+
+document.getElementById('btn-preset-sio2').addEventListener('click', () => {
+    currentLayers = [{ name: "热氧化层 (SiO₂)", A: 1.458, B: 0.0035, C: 0.0, k: 0.0, d: 300, isTarget: true }];
+    renderLayerStack();
+    precomputeBannerMap();
+    drawBanner();
+    updateDiagnosticUI();
+    document.getElementById('log-box').innerText = "已重置为标准单层 SiO₂ 模型。";
+});
+
+document.getElementById('btn-batch-fit').addEventListener('click', () => {
+    const rawText = document.getElementById('csv-import').value.trim();
+    if(!rawText) return;
+    
+    let logBox = document.getElementById('log-box'); logBox.innerText = "⚙️ 调集本地多线程矩阵优化求解器...\n";
+    const minB = parseFloat(document.getElementById('param-bound-min').value) || 100;
+    const maxB = parseFloat(document.getElementById('param-bound-max').value) || 500;
+    const maxDeConfig = parseFloat(document.getElementById('cfg-max-de').value) || 6.5;
+    let fitIdx = currentLayers.findIndex(l => l.isTarget); if(fitIdx === -1) fitIdx = 0;
+
+    const lines = rawText.split('\n'); batchPoints = [];
+    
+    try {
+        for(let i=1; i<lines.length; i++) {
+            if(!lines[i].trim()) continue;
+            const parts = lines[i].split(/\s+/);
+            
+            let id = parts[0], x = parseFloat(parts[1]), y = parseFloat(parts[2]);
+            if(isNaN(x) || isNaN(y)) throw new Error(`第 ${i+1} 行空间坐标轴包含异常数据！`);
+            
+            let sparse = {};
+            if(parts.length < 40) {
+                if(parts.length < 12) throw new Error(`第 ${i+1} 行列数不合要求`);
+                let waveHeader = [380, 430, 480, 530, 580, 630, 680, 730, 780];
+                for(let k=0; k<waveHeader.length; k++) {
+                    let v = parseFloat(parts[3+k]);
+                    if(isNaN(v) || v < 0 || v > 1) throw new Error(`反射率超出 0~1 范围异常！`);
+                    sparse[waveHeader[k]] = v;
+                }
+            } else {
+                if(parts.length < 404) throw new Error(`第 ${i+1} 行密集全谱点数不足 401 列要求！`);
+                for(let w=380; w<=780; w++) {
+                    let v = parseFloat(parts[3 + (w-380)]);
+                    if(isNaN(v) || v < 0 || v > 1) throw new Error(`反射率包含 NaN 或超出 0~1 物理边界！`);
+                    sparse[w] = v;
+                }
+            }
+            batchPoints.push({ id, x, y, spectrum: interpolateTo1nmGrid(sparse), fitD: 0, sigma: 0, mse: 0 });
+        }
+    } catch(err) {
+        alert("🚨 数据流通道异常拦截: " + err.message); return;
+    }
+
+    document.getElementById('prog-container').style.display = 'block';
+    const blob = new Blob([dynamicWorkerCodeBlob], { type: 'application/javascript' });
+    const worker = new Worker(URL.createObjectURL(blob));
+    
+    worker.postMessage({
+        batchPoints, currentLayers, minBound: minB, maxBound: maxB, fitIdx, constants: Grid.getConstants(), deltaEThresh: maxDeConfig
+    });
+
+    worker.onmessage = function(e) {
+        if(e.data.type === 'progress') {
+            let processedCount = e.data.index + 1;
+            let totalCount = e.data.total;
+            let pct = Math.round(processedCount / totalCount * 100);
+            document.getElementById('prog-fill').style.width = pct + "%";
+            document.getElementById('prog-text').innerText = `已处理: ${processedCount} / ${totalCount} 点`;
+        } else if(e.data.type === 'done') {
+            document.getElementById('prog-container').style.display = 'none';
+            batchPoints = e.data.results;
+            activePointIdx = 0;
+            currentLayers[fitIdx].d = batchPoints[0].fitD;
+            document.getElementById('d-' + fitIdx).value = batchPoints[0].fitD.toFixed(1);
+            logBox.innerText += `\n统计：全片反演计算完毕。数据校验收敛完成。`;
+            calculateSPCStats();
+            updateDiagnosticUI();
+            drawWaferMap();
+        }
+    };
+});
+
+function calculateSPCStats() {
+    if(batchPoints.length === 0) return;
+    let thks = batchPoints.map(p => p.fitD);
+    let avg = thks.reduce((a,b)=>a+b,0)/thks.length;
+    let max = Math.max(...thks), min = Math.min(...thks);
+    const lsl = parseFloat(document.getElementById('spc-lsl').value) || 280;
+    const usl = parseFloat(document.getElementById('spc-usl').value) || 320;
+    
+    let sqSum = thks.reduce((s, v) => s + (v - avg)**2, 0);
+    let stdev = Math.sqrt(sqSum / (thks.length - 1)) || 0.05;
+    let cpk = Math.min((usl - avg)/(3*stdev), (avg - lsl)/(3*stdev)); cpk = Math.max(0, cpk);
+
+    document.getElementById('st-avg').innerText = avg.toFixed(1) + " nm";
+    document.getElementById('st-range').innerText = (max - min).toFixed(1) + " nm";
+    document.getElementById('st-cpk').innerText = cpk.toFixed(2);
+    document.getElementById('st-cpk').style.color = cpk >= 1.33 ? 'var(--success-color)' : 'var(--warning-color)';
+
+    evaluateSinglePointStatus(batchPoints[0].mse, batchPoints[0].sigma, batchPoints[0].fitD);
+}
+
+// Wafer Map 点击交互
+document.getElementById('wafer-canvas').addEventListener('click', (e) => {
+    if(batchPoints.length === 0) return;
+    const rect = e.target.getBoundingClientRect();
+    const clickX = e.clientX - rect.left, clickY = e.clientY - rect.top;
+    const r = e.target.width / 2;
+
+    let closestIdx = 0, minDist = Infinity;
+    batchPoints.forEach((pt, idx) => {
+        let cx = r + (pt.x / 100) * (r - 15); let cy = r - (pt.y / 100) * (r - 15);
+        let dist = Math.hypot(clickX - cx, clickY - cy);
+        if(dist < minDist) { minDist = dist; closestIdx = idx; }
+    });
+
+    if(minDist < 10) {
+        activePointIdx = closestIdx;
+        let fIdx = currentLayers.findIndex(l => l.isTarget); if(fIdx === -1) fIdx = 0;
+        currentLayers[fIdx].d = batchPoints[activePointIdx].fitD;
+        document.getElementById('d-' + fIdx).value = currentLayers[fIdx].d.toFixed(1);
+        
+        document.getElementById('log-box').innerText = `单点诊断: ID=${batchPoints[activePointIdx].id} (${batchPoints[activePointIdx].x}, ${batchPoints[activePointIdx].y}mm)\n反演膜厚: ${batchPoints[activePointIdx].fitD.toFixed(1)} ± ${batchPoints[activePointIdx].sigma.toFixed(2)} nm\nMSE残差: ${batchPoints[activePointIdx].mse.toFixed(6)}`;
+        
+        evaluateSinglePointStatus(batchPoints[activePointIdx].mse, batchPoints[activePointIdx].sigma, batchPoints[activePointIdx].fitD);
+        updateDiagnosticUI();
+        drawWaferMap();
+    }
+});
+
+// 配方保存/加载
+document.getElementById('btn-recipe-save').addEventListener('click', () => {
+    let recipeObj = {
+        version: "4.0",
+        layers: currentLayers,
+        lsl: document.getElementById('spc-lsl').value, usl: document.getElementById('spc-usl').value,
+        minB: document.getElementById('param-bound-min').value, maxB: document.getElementById('param-bound-max').value
+    };
+    let dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recipeObj, null, 2));
+    let dlAnchor = document.createElement('a'); dlAnchor.setAttribute("href", dataStr);
+    dlAnchor.setAttribute("download", `Recipe_ThinFilm_Config.json`); dlAnchor.click();
+});
+
+document.getElementById('btn-recipe-load').addEventListener('click', () => { document.getElementById('file-recipe-input').click(); });
+document.getElementById('file-recipe-input').addEventListener('change', (e) => {
+    let file = e.target.files[0]; if(!file) return;
+    let reader = new FileReader();
+    reader.onload = function(evt) {
+        try {
+            let obj = JSON.parse(evt.target.result);
+            if(!obj.version || obj.version !== "4.0") { alert("加载失败：配方版本不兼容！"); return; }
+            
+            activePointIdx = 0; batchPoints = [];
+            document.getElementById('st-avg').innerText = "-";
+            document.getElementById('st-range').innerText = "-";
+            document.getElementById('st-cpk').innerText = "-";
+            
+            currentLayers = obj.layers;
+            document.getElementById('spc-lsl').value = obj.lsl;
+            document.getElementById('spc-usl').value = obj.usl;
+            document.getElementById('param-bound-min').value = obj.minB;
+            document.getElementById('param-bound-max').value = obj.maxB;
+            
+            renderLayerStack(); precomputeBannerMap(); drawBanner(); updateDiagnosticUI(); drawWaferMap();
+            alert("硬掩膜工艺配方及版本校验加载完毕。");
+        } catch(err) { alert("非法文件格式！"); }
+    };
+    reader.readAsText(file);
+});
+
+// 加载样本数据
+document.getElementById('btn-load-sample').addEventListener('click', () => {
+    let txt = "ID\tX(mm)\tY(mm)\t380nm\t430nm\t480nm\t530nm\t580nm\t630nm\t680nm\t730nm\t780nm\n";
+    let coords = [[0,0],[0,35],[35,0],[0,-35],[-35,0],[20,50],[-20,50],[50,-20],[-50,-20],[0,75],[75,0],[0,-75],[-70,0],[55,55],[-55,55],[55,-55],[-55,-55]];
+    coords.forEach((c, i) => {
+        let simD = 302.4 + (Math.random()-0.5)*24; txt += `P-${i+1}\t${c[0]}\t${c[1]}`;
+        let mock = [{ A:1.458, B:0.0035, C:0, k:0, d:simD }];
+        for(let w=380; w<=780; w+=50) {
+            txt += `\t${(runTMM(mock, w, w - 380)).toFixed(4)}`;
+        }
+        txt += "\n";
+    });
+    document.getElementById('csv-import').value = txt;
+    document.getElementById('log-box').innerText = "17点厂内标准监控矩阵（真实物理数据）已就位。";
+});
+
+// 初始化
+document.addEventListener("DOMContentLoaded", () => {
+    precomputeBannerMap();
+    renderLayerStack();
+    initDiagnosticChart();
+    drawBanner();
+    updateDiagnosticUI();
+    drawWaferMap();
+    window.addEventListener('resize', () => drawBanner());
+});
+</script>
+</body>
+</html>
