@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.0</title>
+    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.1</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -73,7 +73,7 @@
 <body>
 
 <header>
-    <h1>ThinFilm-Vision 量测分析系统 V4.0</h1>
+    <h1>ThinFilm-Vision 量测分析系统 V4.1</h1>
     <p>自适应分析台：高密度全谱数据插值 · 理论模型 LUT 并行加速 · 颜色边界约束防伪解</p>
 </header>
 
@@ -162,8 +162,13 @@
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
             <button id="btn-load-sample" style="background-color: #24242c;">加载 17点 厂内样本</button>
-            <button id="btn-batch-fit" style="background-color: #34c759;">⚡ 启动多线程反演</button>
+            <button id="btn-csv-import" style="background-color: #24242c;">📂 导入 CSV 文件</button>
         </div>
+        <div style="margin-top: 4px;">
+            <button id="btn-batch-fit" style="background-color: #34c759; width: 100%;">⚡ 启动多线程反演</button>
+        </div>
+        <input type="file" id="file-csv-input" style="display: none;" accept=".csv,.tsv,.txt">
+        <div id="import-error" style="display: none; background: rgba(255,59,48,0.08); border: 1px solid var(--danger-color); color: var(--danger-color); font-size: 0.68rem; padding: 6px; border-radius: 4px; margin-top: 4px;"></div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
             <button id="btn-recipe-save" style="background-color: #1a1a24; font-size: 0.68rem; border:1px solid #333;">💾 保存当前配方</button>
             <button id="btn-recipe-load" style="background-color: #1a1a24; font-size: 0.68rem; border:1px solid #333;">📂 加载本地配方</button>
@@ -197,28 +202,200 @@ function matMul2x2(A, B) {
     ];
 }
 
+// CIE 1931 2° 标准观察者颜色匹配函数与 CIE 标准照明体 D65 相对光谱功率分布
+// 380-780nm, 1nm 间隔；数据来源: CIE 15:2004 (经 colour-science 导出)
+const CIE_D65 = [
+    49.9755, 50.4428, 50.91, 51.3773, 51.8445, 52.3118, 52.7791, 53.2464, 53.7136, 54.1809,
+    54.6482, 57.4589, 60.2695, 63.0802, 65.8908, 68.7015, 71.5122, 74.3229, 77.1335, 79.9442,
+    82.7549, 83.628, 84.5011, 85.3742, 86.2473, 87.1204, 87.9935, 88.8666, 89.7398, 90.6129,
+    91.486, 91.6806, 91.8752, 92.0697, 92.2643, 92.4589, 92.6535, 92.8481, 93.0426, 93.2372,
+    93.4318, 92.7568, 92.0819, 91.4069, 90.732, 90.057, 89.3821, 88.7071, 88.0322, 87.3572,
+    86.6823, 88.5006, 90.3188, 92.1371, 93.9553, 95.7736, 97.5919, 99.4102, 101.2284, 103.0467,
+    104.865, 106.0792, 107.2934, 108.5076, 109.7218, 110.936, 112.1504, 113.3648, 114.5792, 115.7936,
+    117.008, 117.0884, 117.1688, 117.2492, 117.3296, 117.41, 117.4904, 117.5708, 117.6512, 117.7316,
+    117.812, 117.5168, 117.2216, 116.9264, 116.6312, 116.336, 116.041, 115.746, 115.451, 115.156,
+    114.861, 114.9672, 115.0734, 115.1796, 115.2858, 115.392, 115.4982, 115.6044, 115.7106, 115.8168,
+    115.923, 115.2118, 114.5006, 113.7894, 113.0782, 112.367, 111.6558, 110.9446, 110.2334, 109.5222,
+    108.811, 108.8652, 108.9194, 108.9736, 109.0278, 109.082, 109.1364, 109.1908, 109.2452, 109.2996,
+    109.354, 109.1988, 109.0436, 108.8884, 108.7332, 108.578, 108.4228, 108.2676, 108.1124, 107.9572,
+    107.802, 107.5008, 107.1996, 106.8984, 106.5972, 106.296, 105.9948, 105.6936, 105.3924, 105.0912,
+    104.79, 105.0798, 105.3696, 105.6594, 105.9492, 106.239, 106.529, 106.819, 107.109, 107.399,
+    107.689, 107.3606, 107.0322, 106.7038, 106.3754, 106.047, 105.7186, 105.3902, 105.0618, 104.7334,
+    104.405, 104.369, 104.333, 104.297, 104.261, 104.225, 104.1892, 104.1534, 104.1176, 104.0818,
+    104.046, 103.6414, 103.2368, 102.8322, 102.4276, 102.023, 101.6184, 101.2138, 100.8092, 100.4046,
+    100.0, 99.6334, 99.2668, 98.9003, 98.5337, 98.1671, 97.8005, 97.4339, 97.0674, 96.7008,
+    96.3342, 96.2796, 96.225, 96.1703, 96.1157, 96.0611, 96.0065, 95.9519, 95.8972, 95.8426,
+    95.788, 95.0778, 94.3675, 93.6573, 92.947, 92.2368, 91.5266, 90.8163, 90.1061, 89.3958,
+    88.6856, 88.8177, 88.9497, 89.0818, 89.2138, 89.3459, 89.478, 89.61, 89.7421, 89.8741,
+    90.0062, 89.9655, 89.9248, 89.884, 89.8433, 89.8026, 89.7619, 89.7212, 89.6805, 89.6398,
+    89.5991, 89.4091, 89.219, 89.029, 88.8389, 88.6489, 88.4589, 88.2688, 88.0788, 87.8887,
+    87.6987, 87.2577, 86.8167, 86.3756, 85.9346, 85.4936, 85.0526, 84.6116, 84.1706, 83.7296,
+    83.2886, 83.3297, 83.3707, 83.4118, 83.4528, 83.4939, 83.535, 83.576, 83.6171, 83.6581,
+    83.6992, 83.332, 82.9647, 82.5975, 82.2302, 81.863, 81.4958, 81.1285, 80.7613, 80.394,
+    80.0268, 80.0456, 80.0644, 80.0831, 80.1019, 80.1207, 80.1395, 80.1583, 80.177, 80.1958,
+    80.2146, 80.4209, 80.6272, 80.8336, 81.0399, 81.2462, 81.4525, 81.6588, 81.8652, 82.0715,
+    82.2778, 81.8784, 81.4791, 81.0797, 80.6804, 80.281, 79.8816, 79.4823, 79.0829, 78.6836,
+    78.2842, 77.4279, 76.5716, 75.7153, 74.859, 74.0027, 73.1464, 72.2901, 71.4339, 70.5776,
+    69.7213, 69.9101, 70.0989, 70.2876, 70.4764, 70.6652, 70.854, 71.0428, 71.2315, 71.4203,
+    71.6091, 71.8831, 72.1571, 72.431, 72.705, 72.979, 73.253, 73.527, 73.801, 74.075,
+    74.349, 73.0745, 71.8, 70.5255, 69.251, 67.9765, 66.702, 65.4275, 64.153, 62.8785,
+    61.604, 62.4322, 63.2603, 64.0885, 64.9166, 65.7448, 66.573, 67.4011, 68.2293, 69.0574,
+    69.8856, 70.4057, 70.9259, 71.446, 71.9662, 72.4863, 73.0064, 73.5266, 74.0467, 74.5669,
+    75.087, 73.9376, 72.7881, 71.6387, 70.4892, 69.3398, 68.1904, 67.041, 65.8915, 64.7421,
+    63.5927, 61.8752, 60.1578, 58.4403, 56.7229, 55.0054, 53.288, 51.5705, 49.8531, 48.1356,
+    46.4182, 48.4569, 50.4956, 52.5344, 54.5731, 56.6118, 58.6505, 60.6892, 62.728, 64.7667,
+    66.8054, 66.4631, 66.1209, 65.7786, 65.4364, 65.0941, 64.7518, 64.4096, 64.0673, 63.7251,
+    63.3828
+];
+const CIE_CMF_X = [
+    0.001368, 0.001502, 0.001642, 0.001802, 0.001996, 0.002236, 0.002535, 0.002893, 0.003301, 0.003753,
+    0.004243, 0.004762, 0.00533, 0.005979, 0.006741, 0.00765, 0.008751, 0.010029, 0.011422, 0.012869,
+    0.01431, 0.015704, 0.017147, 0.018781, 0.020748, 0.02319, 0.026207, 0.029782, 0.033881, 0.038468,
+    0.04351, 0.048996, 0.055023, 0.061719, 0.069212, 0.07763, 0.086958, 0.097177, 0.108406, 0.120767,
+    0.13438, 0.149358, 0.165396, 0.181983, 0.198611, 0.21477, 0.230187, 0.24488, 0.258777, 0.271808,
+    0.2839, 0.294944, 0.304896, 0.313787, 0.321645, 0.3285, 0.334351, 0.33921, 0.343121, 0.34613,
+    0.34828, 0.3496, 0.350147, 0.350013, 0.349287, 0.34806, 0.346373, 0.344262, 0.341809, 0.339094,
+    0.3362, 0.333198, 0.330041, 0.326636, 0.322887, 0.3187, 0.314025, 0.308884, 0.30329, 0.297258,
+    0.2908, 0.28397, 0.276721, 0.268918, 0.260423, 0.2511, 0.240848, 0.229851, 0.218407, 0.206812,
+    0.19536, 0.184214, 0.173327, 0.162688, 0.152283, 0.1421, 0.132179, 0.12257, 0.113275, 0.104298,
+    0.09564, 0.0873, 0.079308, 0.071718, 0.064581, 0.05795, 0.051862, 0.046282, 0.041151, 0.036413,
+    0.03201, 0.027917, 0.024144, 0.020687, 0.01754, 0.0147, 0.012162, 0.00992, 0.007967, 0.006296,
+    0.0049, 0.003777, 0.002945, 0.002425, 0.002236, 0.0024, 0.002926, 0.003837, 0.005175, 0.006982,
+    0.0093, 0.012149, 0.015536, 0.019478, 0.023993, 0.0291, 0.034815, 0.04112, 0.047985, 0.055379,
+    0.06327, 0.071635, 0.080462, 0.08974, 0.099456, 0.1096, 0.120167, 0.131115, 0.142368, 0.153854,
+    0.1655, 0.177257, 0.18914, 0.201169, 0.213366, 0.22575, 0.238321, 0.251067, 0.263992, 0.277102,
+    0.2904, 0.303891, 0.317573, 0.331438, 0.345483, 0.3597, 0.374084, 0.38864, 0.403378, 0.418312,
+    0.43345, 0.448795, 0.464336, 0.480064, 0.495971, 0.51205, 0.528296, 0.544692, 0.561209, 0.577821,
+    0.5945, 0.611221, 0.627976, 0.64476, 0.66157, 0.6784, 0.695239, 0.712059, 0.728828, 0.745519,
+    0.7621, 0.778543, 0.794826, 0.810926, 0.826825, 0.8425, 0.857933, 0.873082, 0.887894, 0.902318,
+    0.9163, 0.929799, 0.942798, 0.955278, 0.967218, 0.9786, 0.989386, 0.999549, 1.009089, 1.018006,
+    1.0263, 1.033983, 1.040986, 1.047188, 1.052467, 1.0567, 1.059794, 1.061799, 1.062807, 1.06291,
+    1.0622, 1.060735, 1.058444, 1.055224, 1.050977, 1.0456, 1.039037, 1.031361, 1.022666, 1.013048,
+    1.0026, 0.991367, 0.979331, 0.966492, 0.952848, 0.9384, 0.923194, 0.907244, 0.890502, 0.87292,
+    0.85445, 0.835084, 0.814946, 0.794186, 0.772954, 0.7514, 0.729584, 0.707589, 0.685602, 0.66381,
+    0.6424, 0.621515, 0.601114, 0.581105, 0.561398, 0.5419, 0.5226, 0.503546, 0.484744, 0.466194,
+    0.4479, 0.429861, 0.412098, 0.394644, 0.377533, 0.3608, 0.344456, 0.328517, 0.313019, 0.298001,
+    0.2835, 0.269545, 0.256118, 0.24319, 0.230727, 0.2187, 0.207097, 0.195923, 0.185171, 0.174832,
+    0.1649, 0.155367, 0.14623, 0.13749, 0.129147, 0.1212, 0.11364, 0.106465, 0.09969, 0.093331,
+    0.0874, 0.081901, 0.076804, 0.072077, 0.067687, 0.0636, 0.059807, 0.056282, 0.052971, 0.049819,
+    0.04677, 0.043784, 0.040875, 0.038073, 0.035405, 0.0329, 0.030564, 0.028381, 0.026345, 0.024453,
+    0.0227, 0.021084, 0.0196, 0.018237, 0.016987, 0.01584, 0.014791, 0.013831, 0.012949, 0.012129,
+    0.011359, 0.010629, 0.009939, 0.009288, 0.008679, 0.008111, 0.007582, 0.007089, 0.006627, 0.006195,
+    0.00579, 0.00541, 0.005053, 0.004718, 0.004404, 0.004109, 0.003834, 0.003576, 0.003334, 0.003109,
+    0.002899, 0.002704, 0.002523, 0.002354, 0.002197, 0.002049, 0.001911, 0.001781, 0.00166, 0.001546,
+    0.00144, 0.00134, 0.001246, 0.001158, 0.001076, 0.001, 0.000929, 0.000862, 0.000801, 0.000743,
+    0.00069, 0.000641, 0.000595, 0.000552, 0.000512, 0.000476, 0.000442, 0.000412, 0.000383, 0.000357,
+    0.000332, 0.00031, 0.000289, 0.00027, 0.000252, 0.000235, 0.000219, 0.000205, 0.000191, 0.000178,
+    0.000166, 0.000155, 0.000145, 0.000135, 0.000126, 0.000117, 0.00011, 0.000102, 9.5e-05, 8.9e-05,
+    8.3e-05, 7.8e-05, 7.2e-05, 6.7e-05, 6.3e-05, 5.9e-05, 5.5e-05, 5.1e-05, 4.8e-05, 4.4e-05,
+    4.2e-05
+];
+const CIE_CMF_Y = [
+    3.9e-05, 4.3e-05, 4.7e-05, 5.2e-05, 5.7e-05, 6.4e-05, 7.2e-05, 8.2e-05, 9.4e-05, 0.000106,
+    0.00012, 0.000135, 0.000151, 0.00017, 0.000192, 0.000217, 0.000247, 0.000281, 0.000319, 0.000357,
+    0.000396, 0.000434, 0.000473, 0.000518, 0.000572, 0.00064, 0.000725, 0.000826, 0.000941, 0.00107,
+    0.00121, 0.001362, 0.001531, 0.00172, 0.001935, 0.00218, 0.002455, 0.002764, 0.003118, 0.003526,
+    0.004, 0.004546, 0.005159, 0.005829, 0.006546, 0.0073, 0.008087, 0.008909, 0.009768, 0.010664,
+    0.0116, 0.012573, 0.013583, 0.01463, 0.015715, 0.01684, 0.018007, 0.019214, 0.020454, 0.021718,
+    0.023, 0.024295, 0.02561, 0.026959, 0.028351, 0.0298, 0.031311, 0.032884, 0.034521, 0.036226,
+    0.038, 0.039847, 0.041768, 0.043766, 0.045843, 0.048, 0.050244, 0.052573, 0.054981, 0.057459,
+    0.06, 0.062602, 0.065278, 0.068042, 0.070911, 0.0739, 0.077016, 0.080266, 0.083667, 0.087233,
+    0.09098, 0.094918, 0.099046, 0.103367, 0.107885, 0.1126, 0.117532, 0.122674, 0.127993, 0.133453,
+    0.13902, 0.144676, 0.150469, 0.156462, 0.162718, 0.1693, 0.176243, 0.183558, 0.191273, 0.199418,
+    0.20802, 0.21712, 0.226735, 0.236857, 0.247481, 0.2586, 0.270185, 0.282294, 0.29505, 0.308578,
+    0.323, 0.338402, 0.354686, 0.371699, 0.389288, 0.4073, 0.42563, 0.44431, 0.463394, 0.48294,
+    0.503, 0.523569, 0.544512, 0.56569, 0.586965, 0.6082, 0.629346, 0.650307, 0.670875, 0.690842,
+    0.71, 0.728185, 0.745464, 0.761969, 0.777837, 0.7932, 0.80811, 0.822496, 0.836307, 0.849492,
+    0.862, 0.873811, 0.884962, 0.895494, 0.905443, 0.91485, 0.923735, 0.932092, 0.939923, 0.947225,
+    0.954, 0.960256, 0.966007, 0.971261, 0.976022, 0.9803, 0.984092, 0.987418, 0.990313, 0.992812,
+    0.99495, 0.996711, 0.998098, 0.999112, 0.999748, 1.0, 0.999857, 0.999305, 0.998325, 0.996899,
+    0.995, 0.9926, 0.989743, 0.986444, 0.982724, 0.9786, 0.974084, 0.969171, 0.963857, 0.958135,
+    0.952, 0.94545, 0.938499, 0.931163, 0.923458, 0.9154, 0.907006, 0.898277, 0.889205, 0.879782,
+    0.87, 0.859861, 0.849392, 0.838622, 0.827581, 0.8163, 0.804795, 0.793082, 0.781192, 0.769155,
+    0.757, 0.744754, 0.732422, 0.720004, 0.707496, 0.6949, 0.682219, 0.669472, 0.656674, 0.643845,
+    0.631, 0.618155, 0.605314, 0.592476, 0.579638, 0.5668, 0.553961, 0.541137, 0.528353, 0.515632,
+    0.503, 0.490469, 0.47803, 0.465678, 0.453403, 0.4412, 0.42908, 0.417036, 0.405032, 0.393032,
+    0.381, 0.368918, 0.356827, 0.344777, 0.332818, 0.321, 0.309338, 0.29785, 0.286594, 0.275625,
+    0.265, 0.254763, 0.24489, 0.235334, 0.226053, 0.217, 0.208162, 0.199549, 0.191155, 0.182974,
+    0.175, 0.167224, 0.159646, 0.152278, 0.145126, 0.1382, 0.1315, 0.125025, 0.118779, 0.112769,
+    0.107, 0.101476, 0.096189, 0.091123, 0.086265, 0.0816, 0.077121, 0.072826, 0.06871, 0.06477,
+    0.061, 0.057396, 0.053955, 0.050674, 0.04755, 0.04458, 0.041759, 0.039085, 0.036564, 0.0342,
+    0.032, 0.029963, 0.028077, 0.026329, 0.024708, 0.0232, 0.021801, 0.020501, 0.019281, 0.018121,
+    0.017, 0.015904, 0.014837, 0.013811, 0.012835, 0.01192, 0.011068, 0.010273, 0.009533, 0.008846,
+    0.00821, 0.007624, 0.007085, 0.006591, 0.006138, 0.005723, 0.005343, 0.004996, 0.004676, 0.00438,
+    0.004102, 0.003838, 0.003589, 0.003354, 0.003134, 0.002929, 0.002738, 0.00256, 0.002393, 0.002237,
+    0.002091, 0.001954, 0.001825, 0.001704, 0.00159, 0.001484, 0.001384, 0.001291, 0.001204, 0.001123,
+    0.001047, 0.000977, 0.000911, 0.00085, 0.000793, 0.00074, 0.00069, 0.000643, 0.000599, 0.000558,
+    0.00052, 0.000484, 0.00045, 0.000418, 0.000389, 0.000361, 0.000335, 0.000311, 0.000289, 0.000268,
+    0.000249, 0.000231, 0.000215, 0.000199, 0.000185, 0.000172, 0.00016, 0.000149, 0.000138, 0.000129,
+    0.00012, 0.000112, 0.000104, 9.7e-05, 9.1e-05, 8.5e-05, 7.9e-05, 7.4e-05, 6.9e-05, 6.4e-05,
+    6e-05, 5.6e-05, 5.2e-05, 4.9e-05, 4.5e-05, 4.2e-05, 4e-05, 3.7e-05, 3.4e-05, 3.2e-05,
+    3e-05, 2.8e-05, 2.6e-05, 2.4e-05, 2.3e-05, 2.1e-05, 2e-05, 1.8e-05, 1.7e-05, 1.6e-05,
+    1.5e-05
+];
+const CIE_CMF_Z = [
+    0.00645, 0.007083, 0.007745, 0.008501, 0.009415, 0.01055, 0.011966, 0.013656, 0.015588, 0.01773,
+    0.02005, 0.022511, 0.025203, 0.02828, 0.031897, 0.03621, 0.041438, 0.047504, 0.05412, 0.060998,
+    0.06785, 0.074486, 0.081362, 0.089154, 0.09854, 0.1102, 0.124613, 0.141702, 0.161303, 0.183257,
+    0.2074, 0.233692, 0.262611, 0.294775, 0.330799, 0.3713, 0.416209, 0.465464, 0.519695, 0.57953,
+    0.6456, 0.718484, 0.796713, 0.877846, 0.959439, 1.03905, 1.115367, 1.188497, 1.258123, 1.32393,
+    1.3856, 1.442635, 1.494803, 1.54219, 1.584881, 1.62296, 1.656405, 1.685296, 1.709875, 1.730382,
+    1.74706, 1.760045, 1.769623, 1.776264, 1.780433, 1.7826, 1.782968, 1.7817, 1.779198, 1.775867,
+    1.77211, 1.768259, 1.764039, 1.758944, 1.752466, 1.7441, 1.733559, 1.720858, 1.705937, 1.688737,
+    1.6692, 1.647529, 1.623413, 1.596022, 1.564528, 1.5281, 1.486111, 1.439522, 1.38988, 1.338736,
+    1.28764, 1.237422, 1.187824, 1.138761, 1.090148, 1.0419, 0.994198, 0.947347, 0.901453, 0.856619,
+    0.81295, 0.770517, 0.729445, 0.689914, 0.652105, 0.6162, 0.582329, 0.550416, 0.520338, 0.491967,
+    0.46518, 0.439925, 0.416184, 0.393882, 0.372946, 0.3533, 0.334858, 0.317552, 0.301337, 0.286169,
+    0.272, 0.258817, 0.246484, 0.234772, 0.223453, 0.2123, 0.201169, 0.19012, 0.179225, 0.168561,
+    0.1582, 0.148138, 0.138376, 0.128994, 0.120075, 0.1117, 0.103905, 0.096667, 0.089983, 0.083845,
+    0.07825, 0.073209, 0.068678, 0.064568, 0.060788, 0.05725, 0.053904, 0.050747, 0.047753, 0.044899,
+    0.04216, 0.039507, 0.036936, 0.034458, 0.032089, 0.02984, 0.027712, 0.025694, 0.023787, 0.021989,
+    0.0203, 0.018718, 0.01724, 0.015864, 0.014585, 0.0134, 0.012307, 0.011302, 0.010378, 0.009529,
+    0.00875, 0.008035, 0.007382, 0.006785, 0.006243, 0.00575, 0.005304, 0.0049, 0.004534, 0.004202,
+    0.0039, 0.003623, 0.003371, 0.003141, 0.002935, 0.00275, 0.002585, 0.002439, 0.002309, 0.002197,
+    0.0021, 0.002018, 0.001948, 0.00189, 0.001841, 0.0018, 0.001766, 0.001738, 0.001711, 0.001683,
+    0.00165, 0.00161, 0.001564, 0.001514, 0.001459, 0.0014, 0.001337, 0.00127, 0.001205, 0.001147,
+    0.0011, 0.001069, 0.001049, 0.001036, 0.001021, 0.001, 0.000969, 0.00093, 0.000887, 0.000843,
+    0.0008, 0.000761, 0.000724, 0.000686, 0.000645, 0.0006, 0.000548, 0.000492, 0.000435, 0.000383,
+    0.00034, 0.000307, 0.000283, 0.000265, 0.000252, 0.00024, 0.00023, 0.000221, 0.000212, 0.000202,
+    0.00019, 0.000174, 0.000156, 0.000136, 0.000117, 0.0001, 8.6e-05, 7.5e-05, 6.5e-05, 5.7e-05,
+    5e-05, 4.4e-05, 3.9e-05, 3.6e-05, 3.3e-05, 3e-05, 2.8e-05, 2.6e-05, 2.4e-05, 2.2e-05,
+    2e-05, 1.8e-05, 1.6e-05, 1.4e-05, 1.2e-05, 1e-05, 8e-06, 5e-06, 3e-06, 1e-06,
+    0.0, -0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+    0.0
+];
+
 const Grid = {
     min: 380, max: 780, length: 401,
     getConstants: function() {
         if (this.cache) return this.cache;
-        let d65 = [], cmfX = [], cmfY = [], cmfZ = [], siN = [], siK = [];
+        // Si 衬底光学常数经验模型 (n, k)
+        let siN = [], siK = [];
         for (let wl = this.min; wl <= this.max; wl++) {
-            let norm = (wl - 560) / 40;
-            cmfY.push(Math.exp(-0.5 * norm * norm));
-            cmfX.push(0.35 * Math.exp(-0.5 * Math.pow((wl - 440)/20,2)) + 1.05 * Math.exp(-0.5 * Math.pow((wl - 590)/35,2)));
-            cmfZ.push(1.6 * Math.exp(-0.5 * Math.pow((wl - 450)/25,2)));
-            d65.push(100 * (1 + 0.002 * (wl - 500)));
             siN.push(3.5 + 0.15 * Math.pow(400 / wl, 2));
             siK.push(0.01 + 0.1 * Math.pow(400 / wl, 4));
         }
-        return this.cache = { d65, cmfX, cmfY, cmfZ, siN, siK };
+        return this.cache = { d65: CIE_D65, cmfX: CIE_CMF_X, cmfY: CIE_CMF_Y, cmfZ: CIE_CMF_Z, siN, siK };
     }
 };
 
 function runTMM(stack, wl, idx) {
     let sysM = [[Cpx.create(1), Cpx.create(0)], [Cpx.create(0), Cpx.create(1)]];
     for (let i = 0; i < stack.length; i++) {
-        const n_wl = stack[i].A + (stack[i].B / Math.pow(wl, 2)) + (stack[i].C / Math.pow(wl, 4));
+        const lam_um = wl / 1000; // Cauchy 系数采用 µm 单位制: B[µm²], C[µm⁴]
+        const n_wl = stack[i].A + (stack[i].B / Math.pow(lam_um, 2)) + (stack[i].C / Math.pow(lam_um, 4));
         const q_j = Cpx.create(n_wl, -stack[i].k);
         const delta = Cpx.create((2 * Math.PI * stack[i].d / wl) * n_wl, -(2 * Math.PI * stack[i].d / wl) * stack[i].k);
         const cosD = Cpx.cos(delta); const sinD = Cpx.sin(delta);
@@ -273,14 +450,28 @@ let activePointIdx = 0;
 let diagnosticChart = null;
 let colorMapCache = [];
 
-function evaluateSinglePointStatus(mse, sigma, thickValue) {
+function evaluateWaferStatus() {
+    const dangerEl = document.getElementById('alarm-box-danger');
+    const successEl = document.getElementById('alarm-box-success');
+    if (batchPoints.length === 0) { dangerEl.style.display = 'none'; successEl.style.display = 'none'; return; }
     const lsl = parseFloat(document.getElementById('spc-lsl').value) || 0;
     const usl = parseFloat(document.getElementById('spc-usl').value) || 1000;
     const maxMseConfig = parseFloat(document.getElementById('cfg-max-mse').value) || 0.003;
     const maxSigmaConfig = parseFloat(document.getElementById('cfg-max-sigma').value) || 4.5;
-    let isFaulty = mse > maxMseConfig || sigma > maxSigmaConfig || thickValue < lsl || thickValue > usl;
-    document.getElementById('alarm-box-danger').style.display = isFaulty ? 'block' : 'none';
-    document.getElementById('alarm-box-success').style.display = isFaulty ? 'none' : 'block';
+    let nMse = 0, nSig = 0, nOos = 0, nBad = 0;
+    batchPoints.forEach(p => {
+        const badMse = p.mse > maxMseConfig, badSig = p.sigma > maxSigmaConfig, oos = p.fitD < lsl || p.fitD > usl;
+        if (badMse) nMse++; if (badSig) nSig++; if (oos) nOos++;
+        if (badMse || badSig || oos) nBad++;
+    });
+    const total = batchPoints.length;
+    if (nBad > 0) {
+        dangerEl.innerText = `⚠️ 低置信度告警：${nBad}/${total} 点异常（MSE超标 ${nMse} 点 · σ超标 ${nSig} 点 · 超出规格 ${nOos} 点），请检查工艺匹配度`;
+        dangerEl.style.display = 'block'; successEl.style.display = 'none';
+    } else {
+        successEl.innerText = `✅ 高置信度闭环：全 ${total} 点拟合质量优异`;
+        successEl.style.display = 'block'; dangerEl.style.display = 'none';
+    }
 }
 
 function precomputeBannerMap() {
@@ -320,10 +511,10 @@ function renderLayerStack() {
             </div>
             <div class="layer-controls">
                 <div class="layer-input-sub"><label>Cauchy A</label><input type="number" step="0.001" id="a-${i}" value="${layer.A}"></div>
-                <div class="layer-input-sub"><label>Cauchy B</label><input type="number" step="0.0001" id="b-${i}" value="${layer.B}"></div>
+                <div class="layer-input-sub"><label>Cauchy B (µm²)</label><input type="number" step="0.0001" id="b-${i}" value="${layer.B}"></div>
             </div>
             <div class="layer-controls" style="margin-top: 2px;">
-                <div class="layer-input-sub"><label>Cauchy C (×10⁻⁴)</label><input type="number" step="0.0001" id="c-${i}" value="${layer.C}"></div>
+                <div class="layer-input-sub"><label>Cauchy C (µm⁴)</label><input type="number" step="0.0001" id="c-${i}" value="${layer.C}"></div>
                 <div class="layer-input-sub"><label>消光系数 k</label><input type="number" step="0.0001" id="k-${i}" value="${layer.k}"></div>
             </div>
             <div style="margin-top:2px;" class="layer-input-sub">
@@ -487,7 +678,8 @@ const dynamicWorkerCodeBlob = `
     function runTMMInWorker(stack, wl, idx, siN, siK) {
         let sysM = [[Cpx.create(1), Cpx.create(0)], [Cpx.create(0), Cpx.create(1)]];
         for (let i = 0; i < stack.length; i++) {
-            const n_wl = stack[i].A + (stack[i].B / Math.pow(wl, 2)) + (stack[i].C / Math.pow(wl, 4));
+            const lam_um = wl / 1000; // Cauchy 系数采用 µm 单位制: B[µm²], C[µm⁴]
+            const n_wl = stack[i].A + (stack[i].B / Math.pow(lam_um, 2)) + (stack[i].C / Math.pow(lam_um, 4));
             const q_j = Cpx.create(n_wl, -stack[i].k);
             const delta = Cpx.create((2 * Math.PI * stack[i].d / wl) * n_wl, -(2 * Math.PI * stack[i].d / wl) * stack[i].k);
             const cosD = Cpx.cos(delta); const sinD = Cpx.sin(delta);
@@ -615,6 +807,87 @@ document.getElementById('btn-preset-sio2').addEventListener('click', () => {
     document.getElementById('log-box').innerText = "已重置为标准单层 SiO₂ 模型。";
 });
 
+// -------------------------------------------------------------------------
+// 产线光谱数据解析：自动识别分隔符(逗号/分号/制表符/空白)、表头波长、百分比单位
+// -------------------------------------------------------------------------
+function detectDelimiter(line) {
+    const cands = [',', ';', '\t'];
+    let best = null, bestN = 0;
+    for (const d of cands) { const n = line.split(d).length - 1; if (n > bestN) { bestN = n; best = d; } }
+    return best; // null => 空白分隔
+}
+function splitRow(line, delim) {
+    return delim ? line.split(delim).map(s => s.trim()) : line.trim().split(/\s+/);
+}
+function showImportError(msg) {
+    const el = document.getElementById('import-error');
+    el.innerText = "🚨 数据导入异常: " + msg;
+    el.style.display = 'block';
+}
+function hideImportError() { document.getElementById('import-error').style.display = 'none'; }
+
+function parseSpectrumTable(rawText) {
+    const lines = rawText.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (lines.length === 0) throw new Error("输入为空，请粘贴数据或导入 CSV 文件。");
+    const delim = detectDelimiter(lines[0]);
+    const rows = lines.map(l => splitRow(l, delim));
+    const isNum = s => s !== '' && s !== undefined && !isNaN(Number(s));
+
+    // 表头识别：首行的 X/Y 列或光谱列出现非数字 => 表头行
+    let header = null, r0 = 0;
+    if (rows[0].slice(1, 3).some(c => !isNum(c)) || rows[0].slice(3).some(c => !isNum(c))) { header = rows[0]; r0 = 1; }
+    if (r0 >= rows.length) throw new Error("只检测到表头，没有数据行。");
+    const nCols = rows[r0].length;
+    if (nCols < 4) throw new Error("列数不足 (仅 " + nCols + " 列)，至少需要: 点ID, X, Y, 光谱…");
+    rows.forEach((r, i) => { if (r.length !== nCols) throw new Error("第 " + (i + r0 + 1) + " 行列数 (" + r.length + ") 与第 " + (r0 + 1) + " 行 (" + nCols + ") 不一致。"); });
+
+    // 波长轴识别：优先使用表头波长，否则按列数推断
+    let wavelengths = null, formatDesc = "";
+    if (header) {
+        const wls = header.slice(3).map(Number);
+        if (wls.every(w => isFinite(w) && w >= 200 && w <= 2500)) { wavelengths = wls; formatDesc = "表头波长 " + wls.length + " 点"; }
+    }
+    if (!wavelengths) {
+        const nSpec = nCols - 3;
+        if (nSpec === 401) { wavelengths = Array.from({length: 401}, (_, i) => 380 + i); formatDesc = "密集全谱 401 点 (380–780nm)"; }
+        else if (nSpec === 9) { wavelengths = [380, 430, 480, 530, 580, 630, 680, 730, 780]; formatDesc = "稀疏 9 波段"; }
+        else throw new Error("光谱列数为 " + nSpec + "，无法识别。请在首行提供波长表头，或使用 9 波段 / 401 点全谱格式。");
+    }
+
+    // 百分比单位自动识别 (0–100 => 换算为 0–1)
+    const rawVals = []; let maxV = 0;
+    for (let i = r0; i < rows.length; i++) {
+        const vals = [];
+        for (let k = 3; k < nCols; k++) {
+            const v = Number(rows[i][k]);
+            if (!isFinite(v)) throw new Error("第 " + (i + 1) + " 行第 " + (k + 1) + " 列不是有效数字。");
+            vals.push(v); if (v > maxV) maxV = v;
+        }
+        rawVals.push(vals);
+    }
+    let scale = 1, note = "";
+    if (maxV > 1) {
+        if (maxV <= 100) { scale = 0.01; note = "ℹ️ 检测到百分比单位 (0–100)，已自动换算为 0–1 反射率。"; }
+        else throw new Error("反射率数值超出物理范围 (最大值 " + maxV + ")，应为 0–1 或 0–100。");
+    }
+
+    const points = [];
+    for (let i = r0; i < rows.length; i++) {
+        const id = rows[i][0] || ("P-" + (i - r0 + 1));
+        const x = parseFloat(rows[i][1]), y = parseFloat(rows[i][2]);
+        if (isNaN(x) || isNaN(y)) throw new Error("第 " + (i + 1) + " 行空间坐标 (X, Y) 包含非数字。");
+        const sparse = {};
+        const vals = rawVals[i - r0];
+        for (let k = 0; k < wavelengths.length; k++) {
+            const v = vals[k] * scale;
+            if (v < 0 || v > 1) throw new Error("第 " + (i + 1) + " 行反射率超出 0–1 范围。");
+            sparse[wavelengths[k]] = v;
+        }
+        points.push({ id, x, y, spectrum: interpolateTo1nmGrid(sparse), fitD: 0, sigma: 0, mse: 0 });
+    }
+    return { points, note, formatDesc };
+}
+
 document.getElementById('btn-batch-fit').addEventListener('click', () => {
     const rawText = document.getElementById('csv-import').value.trim();
     if(!rawText) return;
@@ -625,37 +898,14 @@ document.getElementById('btn-batch-fit').addEventListener('click', () => {
     const maxDeConfig = parseFloat(document.getElementById('cfg-max-de').value) || 6.5;
     let fitIdx = currentLayers.findIndex(l => l.isTarget); if(fitIdx === -1) fitIdx = 0;
 
-    const lines = rawText.split('\n'); batchPoints = [];
-    
     try {
-        for(let i=1; i<lines.length; i++) {
-            if(!lines[i].trim()) continue;
-            const parts = lines[i].split(/\s+/);
-            
-            let id = parts[0], x = parseFloat(parts[1]), y = parseFloat(parts[2]);
-            if(isNaN(x) || isNaN(y)) throw new Error(`第 ${i+1} 行空间坐标轴包含异常数据！`);
-            
-            let sparse = {};
-            if(parts.length < 40) {
-                if(parts.length < 12) throw new Error(`第 ${i+1} 行列数不合要求`);
-                let waveHeader = [380, 430, 480, 530, 580, 630, 680, 730, 780];
-                for(let k=0; k<waveHeader.length; k++) {
-                    let v = parseFloat(parts[3+k]);
-                    if(isNaN(v) || v < 0 || v > 1) throw new Error(`反射率超出 0~1 范围异常！`);
-                    sparse[waveHeader[k]] = v;
-                }
-            } else {
-                if(parts.length < 404) throw new Error(`第 ${i+1} 行密集全谱点数不足 401 列要求！`);
-                for(let w=380; w<=780; w++) {
-                    let v = parseFloat(parts[3 + (w-380)]);
-                    if(isNaN(v) || v < 0 || v > 1) throw new Error(`反射率包含 NaN 或超出 0~1 物理边界！`);
-                    sparse[w] = v;
-                }
-            }
-            batchPoints.push({ id, x, y, spectrum: interpolateTo1nmGrid(sparse), fitD: 0, sigma: 0, mse: 0 });
-        }
+        const parsed = parseSpectrumTable(rawText);
+        batchPoints = parsed.points;
+        hideImportError();
+        logBox.innerText += "📥 数据解析成功: " + parsed.points.length + " 点 (" + parsed.formatDesc + ")。\n";
+        if (parsed.note) logBox.innerText += parsed.note + "\n";
     } catch(err) {
-        alert("🚨 数据流通道异常拦截: " + err.message); return;
+        showImportError(err.message); return;
     }
 
     document.getElementById('prog-container').style.display = 'block';
@@ -704,7 +954,7 @@ function calculateSPCStats() {
     document.getElementById('st-cpk').innerText = cpk.toFixed(2);
     document.getElementById('st-cpk').style.color = cpk >= 1.33 ? 'var(--success-color)' : 'var(--warning-color)';
 
-    evaluateSinglePointStatus(batchPoints[0].mse, batchPoints[0].sigma, batchPoints[0].fitD);
+    evaluateWaferStatus();
 }
 
 // Wafer Map 点击交互
@@ -729,11 +979,40 @@ document.getElementById('wafer-canvas').addEventListener('click', (e) => {
         
         document.getElementById('log-box').innerText = `单点诊断: ID=${batchPoints[activePointIdx].id} (${batchPoints[activePointIdx].x}, ${batchPoints[activePointIdx].y}mm)\n反演膜厚: ${batchPoints[activePointIdx].fitD.toFixed(1)} ± ${batchPoints[activePointIdx].sigma.toFixed(2)} nm\nMSE残差: ${batchPoints[activePointIdx].mse.toFixed(6)}`;
         
-        evaluateSinglePointStatus(batchPoints[activePointIdx].mse, batchPoints[activePointIdx].sigma, batchPoints[activePointIdx].fitD);
+        evaluateWaferStatus();
         updateDiagnosticUI();
         drawWaferMap();
     }
 });
+
+// CSV 文件导入与拖拽
+document.getElementById('btn-csv-import').addEventListener('click', () => document.getElementById('file-csv-input').click());
+document.getElementById('file-csv-input').addEventListener('change', (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+        document.getElementById('csv-import').value = evt.target.result;
+        hideImportError();
+        document.getElementById('log-box').innerText = "📂 已载入文件: " + file.name + " (" + (file.size/1024).toFixed(1) + " KB)，点击\"⚡ 启动多线程反演\"开始处理。";
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+});
+(function enableCsvDrop() {
+    const csvArea = document.getElementById('csv-import');
+    csvArea.addEventListener('dragover', (e) => { e.preventDefault(); csvArea.style.borderColor = 'var(--accent-color)'; });
+    csvArea.addEventListener('dragleave', () => { csvArea.style.borderColor = ''; });
+    csvArea.addEventListener('drop', (e) => {
+        e.preventDefault(); csvArea.style.borderColor = '';
+        const file = e.dataTransfer.files && e.dataTransfer.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            csvArea.value = evt.target.result; hideImportError();
+            document.getElementById('log-box').innerText = "📂 已拖入文件: " + file.name + "，点击\"⚡ 启动多线程反演\"开始处理。";
+        };
+        reader.readAsText(file);
+    });
+})();
 
 // 配方保存/加载
 document.getElementById('btn-recipe-save').addEventListener('click', () => {
@@ -761,6 +1040,7 @@ document.getElementById('file-recipe-input').addEventListener('change', (e) => {
             document.getElementById('st-avg').innerText = "-";
             document.getElementById('st-range').innerText = "-";
             document.getElementById('st-cpk').innerText = "-";
+            evaluateWaferStatus();
             
             currentLayers = obj.layers;
             document.getElementById('spc-lsl').value = obj.lsl;
