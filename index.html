@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.6</title>
+    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.7</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -52,6 +52,20 @@
         .layer-input-sub input { background: #0f0f12; border: 1px solid var(--border-color); color: #fff; padding: 3px; border-radius: 4px; font-size: 0.7rem; }
         .wafer-map-wrapper { display: flex; flex-direction: column; align-items: center; background: #1e1e26; padding: 6px; border-radius: 6px; border: 1px solid var(--border-color); position: relative; }
         #wafer-canvas { background: #0f0f12; border-radius: 50%; box-shadow: inset 0 0 10px rgba(0,0,0,0.9); cursor: pointer; }
+        .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 6px; }
+        .meta-grid label { font-size: 0.66rem; color: var(--text-dim); display: block; margin-bottom: 2px; }
+        .meta-grid input { width: 100%; box-sizing: border-box; background: #0f0f12; border: 1px solid #2a2a32; color: #fff; border-radius: 4px; padding: 4px 6px; font-size: 0.72rem; }
+        .lib-list { margin-top: 6px; max-height: 132px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+        .lib-item { display: flex; align-items: center; gap: 6px; background: #13131a; border: 1px solid #24242c; border-radius: 4px; padding: 4px 6px; font-size: 0.7rem; cursor: pointer; color: #ddd; }
+        .lib-item:hover { border-color: #4a9eff; }
+        .lib-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .lib-item .del { margin-left: auto; color: #666; cursor: pointer; padding: 0 2px; }
+        .lib-item .del:hover { color: #ff3b30; }
+        .panel-subtitle { font-size: 0.72rem; color: #aaa; margin: 10px 0 4px; font-weight: bold; }
+        .cmp-table { width: 100%; border-collapse: collapse; font-size: 0.68rem; margin-top: 6px; }
+        .cmp-table th, .cmp-table td { border: 1px solid #2a2a32; padding: 3px 5px; text-align: right; color: #ddd; }
+        .cmp-table th { background: #1a1a22; color: #aaa; font-weight: normal; }
+        .cmp-table td:first-child, .cmp-table th:first-child { text-align: left; }
         .map-legend-bar { width: 100%; height: 8px; margin-top: 6px; border-radius: 2px; border: 1px solid #333; }
         .legend-labels { display: flex; justify-content: space-between; width: 100%; font-size: 0.62rem; color: #8e8e93; margin-top: 2px; font-family: monospace; }
         .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; width: 100%; margin-top: 6px; text-align: center; font-size: 0.7rem; }
@@ -73,7 +87,7 @@
 <body>
 
 <header>
-    <h1>ThinFilm-Vision 量测分析系统 V4.6</h1>
+    <h1>ThinFilm-Vision 量测分析系统 V4.7</h1>
     <p>自适应分析台：高密度全谱数据插值 · 理论模型 LUT 并行加速 · 颜色边界约束防伪解</p>
 </header>
 
@@ -190,6 +204,37 @@
 
         <div class="panel-title">7. 多谷自适应寻优日志</div>
         <div class="log-area" id="log-box">👋 三步上手：1) 点「加载 17点 厂内样本」或粘贴 CSV 数据  2) 确认膜层配方与拟合窗口  3) 点「⚡ 启动多线程反演」</div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">8. Lot 管理与 A/B 对比 <span id="lib-count" style="font-size:0.66rem;color:var(--text-dim);font-weight:normal;"></span></div>
+        <div class="meta-grid">
+            <div><label>Lot ID</label><input id="meta-lot" placeholder="例 LOT2026092601"></div>
+            <div><label>Wafer ID</label><input id="meta-wafer" placeholder="例 W01"></div>
+            <div><label>机台 / Chamber</label><input id="meta-tool" placeholder="例 PVD-03 / Ch-A"></div>
+            <div><label>Recipe</label><input id="meta-recipe" placeholder="例 SiN-200nm"></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 6px;">
+            <button id="btn-lib-save" style="background-color: #1a3a5c;">💾 保存当前片到库</button>
+            <button id="btn-lib-clear" style="background-color: #24242c;">🗑 清空 Wafer 库</button>
+        </div>
+        <div class="lib-list" id="wafer-lib-list"></div>
+
+        <div class="panel-subtitle">📈 Lot 趋势（库内各片：均值 / 极差）</div>
+        <canvas id="lot-trend-canvas" width="300" height="132" style="width:100%;background:#0f0f12;border:1px solid #24242c;border-radius:4px;"></canvas>
+
+        <div class="panel-subtitle">⚖️ A/B 对比（PM 前后 / Chamber matching）</div>
+        <div style="display: flex; gap: 4px; align-items: center;">
+            <select id="cmp-a" style="flex:1;background:#0f0f12;color:#fff;border:1px solid #2a2a32;border-radius:4px;padding:4px;font-size:0.7rem;"></select>
+            <span style="color:#666;font-size:0.7rem;">vs</span>
+            <select id="cmp-b" style="flex:1;background:#0f0f12;color:#fff;border:1px solid #2a2a32;border-radius:4px;padding:4px;font-size:0.7rem;"></select>
+            <button id="btn-cmp" style="background-color: #24242c; padding: 4px 10px;">对比</button>
+        </div>
+        <div style="display: flex; gap: 12px; justify-content: center; margin-top: 8px;">
+            <div style="text-align:center;"><canvas id="cmp-canvas-a" width="110" height="110"></canvas><div id="cmp-label-a" style="font-size:0.66rem;color:#aaa;"></div></div>
+            <div style="text-align:center;"><canvas id="cmp-canvas-b" width="110" height="110"></canvas><div id="cmp-label-b" style="font-size:0.66rem;color:#aaa;"></div></div>
+        </div>
+        <div id="cmp-result"></div>
     </div>
 </div>
 
@@ -701,43 +746,36 @@ function updateDiagnosticUI() {
     if(hexDisp) hexDisp.innerText = `${hex} (${currentLayers[fIdx].d.toFixed(1)} nm)`;
 }
 
-function drawWaferMap() {
-    const canvas = document.getElementById('wafer-canvas');
-    if(!canvas) return;
-    const ctx = canvas.getContext('2d');
-    const r = canvas.width / 2; ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const lsl = parseFloat(document.getElementById('spc-lsl')?.value) || 0;
-    const usl = parseFloat(document.getElementById('spc-usl')?.value) || 1000;
-    
+// 晶圆图绘制核心：磁盘底 + IDW 插值伪彩 + 点位；供主图与 A/B 对比小图复用
+// opts: { interpOn, activeIdx(-1=无), lsl, usl(null=不画超规圈), scale({minD,maxD} 强制共用标尺) }
+// 返回 {minD,maxD,delta} 或 null(无数据)
+function paintWaferMapCore(ctx, cw, pts, wcfg, opts) {
+    opts = opts || {};
+    const r = cw / 2; ctx.clearRect(0, 0, cw, cw);
     ctx.beginPath(); ctx.arc(r, r, r - 5, 0, Math.PI * 2); ctx.fillStyle = '#111116'; ctx.fill();
     ctx.lineWidth = 1.2; ctx.strokeStyle = '#252530'; ctx.stroke();
     ctx.fillStyle = '#0b0b0d'; ctx.beginPath(); ctx.arc(r, r*2 - 3, 3, 0, Math.PI, true); ctx.fill();
 
-    if(batchPoints.length === 0) {
+    if (!pts || pts.length === 0) {
         ctx.fillStyle = '#4a4a55'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
         ctx.fillText('暂无数据', r, r - 10);
         ctx.font = '10px system-ui'; ctx.fillStyle = '#3a3a44';
         ctx.fillText('点击「加载 17点 厂内样本」或粘贴 CSV 后运行反演', r, r + 12);
-        return;
+        return null;
     }
-    refreshExclusion();
-    const wcfg = getWaferConfig();
     const pxPerMm = (r - 15) / wcfg.radius;
-    const mapPts = statsPoints().length ? statsPoints() : batchPoints;
+    const eff = pts.filter(p => !p.excluded);
+    const mapPts = eff.length ? eff : pts;
     let thicknesses = mapPts.map(p => p.fitD);
-    let maxD = Math.max(...thicknesses), minD = Math.min(...thicknesses); let delta = maxD - minD || 1;
-
-    const legendCanvas = document.getElementById('map-legend');
-    document.getElementById('lg-min').innerText = minD.toFixed(1) + " nm";
-    document.getElementById('lg-mid').innerText = ((minD + maxD)/2).toFixed(1) + " nm";
-    document.getElementById('lg-max').innerText = maxD.toFixed(1) + " nm";
-    if(legendCanvas) legendCanvas.style.background = `linear-gradient(to right, rgb(68,1,84), rgb(49,104,142), rgb(33,145,140), rgb(94,201,98), rgb(253,231,37))`;
+    let maxD = Math.max(...thicknesses), minD = Math.min(...thicknesses);
+    if (opts.scale) { minD = opts.scale.minD; maxD = opts.scale.maxD; }
+    let delta = maxD - minD || 1;
 
     // ---- 全片插值伪彩 (IDW)：有效点>=3 才做 ----
-    const interpOn = document.getElementById('cfg-wafer-interp')?.checked !== false;
+    const interpOn = opts.interpOn !== false;
     const validPts = mapPts.filter(p => !p.excluded && Number.isFinite(p.fitD));
     if (interpOn && validPts.length >= 3) {
-        const S = 2, w = Math.floor(canvas.width / S), h = Math.floor(canvas.height / S);
+        const S = 2, w = Math.floor(cw / S), h = Math.floor(cw / S);
         const off = document.createElement('canvas'); off.width = w; off.height = h;
         const octx = off.getContext('2d');
         const img = octx.createImageData(w, h);
@@ -755,7 +793,7 @@ function drawWaferMap() {
         octx.putImageData(img, 0, 0);
         ctx.save();
         ctx.beginPath(); ctx.arc(r, r, r - 5, 0, Math.PI * 2); ctx.clip();
-        ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(off, 0, 0, cw, cw);
         ctx.restore();
         // 边缘剔除环压暗
         if (wcfg.excl > 0) {
@@ -768,21 +806,51 @@ function drawWaferMap() {
         }
     }
 
-    batchPoints.forEach((pt, idx) => {
+    const dotR = cw < 130 ? 2.5 : 3.5;
+    pts.forEach((pt, idx) => {
         let cx = r + pt.x * pxPerMm; let cy = r - pt.y * pxPerMm;
         let ratio = (pt.fitD - minD) / delta;
-        
-        ctx.beginPath(); ctx.arc(cx, cy, idx === activePointIdx ? 5.5 : 3.5, 0, Math.PI * 2);
+        const isActive = idx === opts.activeIdx;
+        ctx.beginPath(); ctx.arc(cx, cy, isActive ? dotR + 2 : dotR, 0, Math.PI * 2);
         ctx.fillStyle = pt.excluded ? '#3a3a42' : getViridisColor(ratio); ctx.fill();
-        ctx.lineWidth = idx === activePointIdx ? 1.5 : 0.6;
-        ctx.strokeStyle = idx === activePointIdx ? '#fff' : '#000'; ctx.stroke();
+        ctx.lineWidth = isActive ? 1.5 : 0.6;
+        ctx.strokeStyle = isActive ? '#fff' : '#000'; ctx.stroke();
 
-        if(!pt.excluded && (pt.fitD < lsl || pt.fitD > usl)) {
+        if (opts.lsl != null && opts.usl != null && !pt.excluded && (pt.fitD < opts.lsl || pt.fitD > opts.usl)) {
             ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1.2;
-            ctx.beginPath(); ctx.arc(cx, cy, idx === activePointIdx ? 7.5 : 5.5, 0, Math.PI * 2);
+            ctx.beginPath(); ctx.arc(cx, cy, (isActive ? dotR + 2 : dotR) + 2, 0, Math.PI * 2);
             ctx.stroke();
         }
     });
+    return { minD: minD, maxD: maxD, delta: delta };
+}
+
+function drawWaferMap() {
+    const canvas = document.getElementById('wafer-canvas');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const lsl = parseFloat(document.getElementById('spc-lsl')?.value) || 0;
+    const usl = parseFloat(document.getElementById('spc-usl')?.value) || 1000;
+
+    if(batchPoints.length === 0) {
+        paintWaferMapCore(ctx, canvas.width, [], getWaferConfig(), {});
+        document.getElementById('lg-min').innerText = "- nm";
+        document.getElementById('lg-mid').innerText = "- nm";
+        document.getElementById('lg-max').innerText = "- nm";
+        return;
+    }
+    refreshExclusion();
+    const wcfg = getWaferConfig();
+    const interpOn = document.getElementById('cfg-wafer-interp')?.checked !== false;
+    const sc = paintWaferMapCore(ctx, canvas.width, batchPoints, wcfg,
+        { interpOn: interpOn, activeIdx: activePointIdx, lsl: lsl, usl: usl });
+    if (!sc) return;
+
+    const legendCanvas = document.getElementById('map-legend');
+    document.getElementById('lg-min').innerText = sc.minD.toFixed(1) + " nm";
+    document.getElementById('lg-mid').innerText = ((sc.minD + sc.maxD)/2).toFixed(1) + " nm";
+    document.getElementById('lg-max').innerText = sc.maxD.toFixed(1) + " nm";
+    if(legendCanvas) legendCanvas.style.background = `linear-gradient(to right, rgb(68,1,84), rgb(49,104,142), rgb(33,145,140), rgb(94,201,98), rgb(253,231,37))`;
 }
 
 // =========================================================================
@@ -1203,6 +1271,7 @@ function finalizeBatchFit(results) {
     currentLayers[fIdx].d = batchPoints[0].fitD;
     document.getElementById('d-' + fIdx).value = batchPoints[0].fitD.toFixed(1);
     document.getElementById('log-box').innerText += "\n统计：全片反演计算完毕。数据校验收敛完成。";
+    document.getElementById('log-box').innerText += "\n💡 填写面板 8 的 Lot/Wafer/机台信息后，点「保存当前片到库」即可做 Lot 趋势与 A/B 对比。";
     if (document.getElementById('cfg-joint-a').checked && isFinite(batchPoints[0].fitA)) {
         currentLayers[fIdx].A = batchPoints[0].fitA;
         document.getElementById('a-' + fIdx).value = batchPoints[0].fitA.toFixed(4);
@@ -1250,6 +1319,218 @@ function refreshExclusion() {
     batchPoints.forEach(p => { p.excluded = Math.hypot(p.x, p.y) > rLim; });
 }
 function statsPoints() { return batchPoints.filter(p => !p.excluded); }
+
+// -------------------------------------------------------------------------
+// 8. Wafer 库 / Lot 趋势 / A/B 对比（Fab 视角：身份 + 多片 + 趋势 + 对比）
+// -------------------------------------------------------------------------
+let waferLib = [];
+const LIB_KEY = 'tfv_wafer_lib_v1';
+
+function getWaferMeta() {
+    const g = (id) => ((document.getElementById(id) || {}).value || '').trim();
+    return { lot: g('meta-lot'), wafer: g('meta-wafer'), tool: g('meta-tool'), recipe: g('meta-recipe'), time: new Date().toLocaleString() };
+}
+function setWaferMeta(m) {
+    if (!m) return;
+    const s = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+    s('meta-lot', m.lot); s('meta-wafer', m.wafer); s('meta-tool', m.tool); s('meta-recipe', m.recipe);
+}
+function slimPoint(p) {
+    return { id: p.id, x: p.x, y: p.y, fitD: p.fitD, sigma: p.sigma, mse: p.mse,
+             fitA: isFinite(p.fitA) ? p.fitA : null, excluded: !!p.excluded };
+}
+function waferLabel(w) {
+    const i = waferLib.indexOf(w);
+    const tag = w.meta.wafer || ('#' + (i + 1));
+    return (w.meta.lot ? w.meta.lot + '/' : '') + tag + (w.meta.tool ? ' @' + w.meta.tool : '');
+}
+function libStats(w) {
+    const pts = w.pts.filter(p => !p.excluded && Number.isFinite(p.fitD));
+    return computeStats(pts);
+}
+function cpkColor(cpk) {
+    return cpk >= 1.33 ? '#34c759' : (cpk >= 1.0 ? '#ff9f0a' : '#ff3b30');
+}
+
+function saveWaferToLib() {
+    const fitted = batchPoints.filter(p => Number.isFinite(p.fitD) && p.fitD !== 0);
+    if (fitted.length === 0) {
+        document.getElementById('log-box').innerText += '\n⚠️ 请先导入数据并运行反演，再保存到 Wafer 库。';
+        return;
+    }
+    const meta = getWaferMeta();
+    if (!meta.wafer) meta.wafer = 'W' + String(waferLib.length + 1).padStart(2, '0');
+    const entry = { meta: meta, pts: fitted.map(slimPoint), full: batchPoints.slice() };
+    const dup = waferLib.findIndex(w => w.meta.lot === meta.lot && w.meta.wafer === meta.wafer);
+    if (dup >= 0) { waferLib[dup] = entry; }
+    else { waferLib.push(entry); }
+    renderLibList(); drawLotTrend(); refreshCmpSelects(); persistLib();
+    document.getElementById('log-box').innerText += '\n💾 已保存 ' + waferLabel(entry) + '（' + fitted.length + ' 点）到 Wafer 库。';
+}
+
+function loadWaferFromLib(i) {
+    const w = waferLib[i]; if (!w) return;
+    batchPoints = (w.full && w.full.length ? w.full : w.pts).slice();
+    activePointIdx = 0;
+    setWaferMeta(w.meta);
+    refreshExclusion(); drawBanner(); updateDiagnosticUI(); drawWaferMap(); calculateSPCStats();
+    document.getElementById('log-box').innerText += '\n📂 已载入 ' + waferLabel(w) + '。';
+}
+
+function deleteWaferFromLib(i, ev) {
+    if (ev) ev.stopPropagation();
+    waferLib.splice(i, 1);
+    renderLibList(); drawLotTrend(); refreshCmpSelects(); persistLib();
+}
+
+function renderLibList() {
+    const box = document.getElementById('wafer-lib-list');
+    if (!box) return;
+    document.getElementById('lib-count').innerText = waferLib.length ? ('共 ' + waferLib.length + ' 片') : '';
+    if (!waferLib.length) { box.innerHTML = '<div style="font-size:0.68rem;color:#555;padding:4px;">库为空：反演后填写 Lot/Wafer 信息，点「保存当前片到库」。点击条目可载回主视图。</div>'; return; }
+    box.innerHTML = waferLib.map((w, i) => {
+        const s = libStats(w);
+        const txt = s ? (s.avg.toFixed(1) + 'nm · R' + s.range.toFixed(1) + ' · Cpk' + s.cpk.toFixed(2)) : '无有效点';
+        const col = s ? cpkColor(s.cpk) : '#666';
+        return '<div class="lib-item" data-i="' + i + '"><span class="dot" style="background:' + col + '"></span>' +
+            '<span>' + escHtml(waferLabel(w)) + '</span>' +
+            '<span style="color:#888;margin-left:2px;">' + txt + '</span>' +
+            '<span class="del" data-del="' + i + '" title="删除">✕</span></div>';
+    }).join('');
+    box.querySelectorAll('.lib-item').forEach(el => {
+        el.addEventListener('click', () => loadWaferFromLib(parseInt(el.dataset.i)));
+    });
+    box.querySelectorAll('[data-del]').forEach(el => {
+        el.addEventListener('click', (ev) => deleteWaferFromLib(parseInt(el.dataset.del), ev));
+    });
+}
+
+function drawLotTrend() {
+    const canvas = document.getElementById('lot-trend-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    const rows = waferLib.map(w => ({ w: w, s: libStats(w) })).filter(r => r.s);
+    if (!rows.length) {
+        ctx.fillStyle = '#4a4a55'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText('库为空，暂无趋势', W / 2, H / 2);
+        return;
+    }
+    const lsl = parseFloat(document.getElementById('spc-lsl')?.value) || 0;
+    const usl = parseFloat(document.getElementById('spc-usl')?.value) || 1000;
+    const plots = [
+        { y0: 4, y1: H / 2 - 4, title: '均值 (nm)', get: r => r.s.avg, ref: [(lsl + usl) / 2, lsl, usl] },
+        { y0: H / 2 + 4, y1: H - 14, title: '极差 (nm)', get: r => r.s.range, ref: [] }
+    ];
+    const n = rows.length;
+    const xAt = (i) => 34 + (W - 44) * (n === 1 ? 0.5 : i / (n - 1));
+    plots.forEach(pl => {
+        const vals = rows.map(pl.get);
+        let lo = Math.min(...vals, ...pl.ref), hi = Math.max(...vals, ...pl.ref);
+        if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }
+        const pad = (hi - lo) * 0.15; lo -= pad; hi += pad;
+        const yAt = (v) => pl.y1 - (pl.y1 - pl.y0) * (v - lo) / (hi - lo);
+        ctx.strokeStyle = '#2a2a32'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(30, pl.y0); ctx.lineTo(30, pl.y1); ctx.lineTo(W - 6, pl.y1); ctx.stroke();
+        ctx.fillStyle = '#666'; ctx.font = '9px system-ui'; ctx.textAlign = 'left';
+        ctx.fillText(pl.title, 34, pl.y0 + 9);
+        ctx.textAlign = 'right';
+        ctx.fillText(hi.toFixed(1), 28, pl.y0 + 9); ctx.fillText(lo.toFixed(1), 28, pl.y1);
+        pl.ref.forEach((rv, ri) => {
+            ctx.strokeStyle = ri === 0 ? '#4a9eff' : '#ff3b30'; ctx.setLineDash([3, 3]); ctx.lineWidth = 0.8;
+            ctx.beginPath(); ctx.moveTo(30, yAt(rv)); ctx.lineTo(W - 6, yAt(rv)); ctx.stroke();
+            ctx.setLineDash([]);
+        });
+        // 折线
+        ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1.2; ctx.beginPath();
+        rows.forEach((r, i) => { const x = xAt(i), y = yAt(pl.get(r)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+        ctx.stroke();
+        rows.forEach((r, i) => {
+            const x = xAt(i), y = yAt(pl.get(r));
+            ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = cpkColor(r.s.cpk); ctx.fill();
+        });
+    });
+    // X 轴标签
+    ctx.fillStyle = '#666'; ctx.font = '8px system-ui'; ctx.textAlign = 'center';
+    const step = Math.max(1, Math.ceil(n / 8));
+    rows.forEach((r, i) => {
+        if (i % step === 0 || i === n - 1) ctx.fillText(r.w.meta.wafer || ('#' + (i + 1)), xAt(i), H - 3);
+    });
+}
+
+function refreshCmpSelects() {
+    ['cmp-a', 'cmp-b'].forEach((id, k) => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        sel.innerHTML = waferLib.map((w, i) => '<option value="' + i + '">' + escHtml(waferLabel(w)) + '</option>').join('');
+        if (waferLib.length > k) sel.value = String(k);
+    });
+}
+
+function runCompare() {
+    const box = document.getElementById('cmp-result');
+    const ai = parseInt((document.getElementById('cmp-a') || {}).value);
+    const bi = parseInt((document.getElementById('cmp-b') || {}).value);
+    const A = waferLib[ai], B = waferLib[bi];
+    const res = (html) => { if (box) box.innerHTML = html; };
+    if (!A || !B) { res('<div style="font-size:0.68rem;color:#888;margin-top:6px;">请先保存至少两片到 Wafer 库。</div>'); return; }
+    if (ai === bi) { res('<div style="font-size:0.68rem;color:#ff9f0a;margin-top:6px;">请选择两片不同的 Wafer。</div>'); return; }
+    const wcfg = getWaferConfig();
+    const rLim = wcfg.radius - wcfg.excl;
+    const slim = (w) => w.pts.map(p => Object.assign({}, p, { excluded: Math.hypot(p.x, p.y) > rLim }));
+    const pA = slim(A), pB = slim(B);
+    const lsl = parseFloat(document.getElementById('spc-lsl')?.value) || 0;
+    const usl = parseFloat(document.getElementById('spc-usl')?.value) || 1000;
+    // 共用标尺，避免不同量程误导
+    const allD = [...pA, ...pB].filter(p => !p.excluded).map(p => p.fitD);
+    const scale = { minD: Math.min(...allD), maxD: Math.max(...allD) };
+    const cA = document.getElementById('cmp-canvas-a'), cB = document.getElementById('cmp-canvas-b');
+    if (cA) paintWaferMapCore(cA.getContext('2d'), cA.width, pA, wcfg, { interpOn: true, activeIdx: -1, lsl: lsl, usl: usl, scale: scale });
+    if (cB) paintWaferMapCore(cB.getContext('2d'), cB.width, pB, wcfg, { interpOn: true, activeIdx: -1, lsl: lsl, usl: usl, scale: scale });
+    const lab = (id, w) => { const el = document.getElementById(id); if (el) el.innerText = waferLabel(w); };
+    lab('cmp-label-a', A); lab('cmp-label-b', B);
+    const sA = computeStats(pA.filter(p => !p.excluded)), sB = computeStats(pB.filter(p => !p.excluded));
+    if (!sA || !sB) { res('<div style="font-size:0.68rem;color:#888;margin-top:6px;">某片无有效统计点。</div>'); return; }
+    const cntOOS = (pts) => pts.filter(p => !p.excluded && (p.fitD < lsl || p.fitD > usl)).length;
+    const d = (a, b, f) => (a - b).toFixed(f);
+    const row = (name, fa, fb, f) =>
+        '<tr><td>' + name + '</td><td>' + fa(sA) + '</td><td>' + fb(sB) + '</td><td style="color:' +
+        ((fa(sA) - fb(sB)) >= 0 ? '#ff9f0a' : '#4a9eff') + '">' + (fa(sA) >= fb(sB) ? '+' : '') + d(fa(sA), fb(sB), f) + '</td></tr>';
+    res('<table class="cmp-table"><tr><th>指标</th><th>A</th><th>B</th><th>Δ(A−B)</th></tr>' +
+        row('均值 (nm)', s => s.avg, s => s.avg, 2) +
+        row('极差 (nm)', s => s.range, s => s.range, 2) +
+        row('σ (nm)', s => s.stdev, s => s.stdev, 3) +
+        row('Cpk', s => s.cpk, s => s.cpk, 2) +
+        '<tr><td>超规点数</td><td>' + cntOOS(pA) + '</td><td>' + cntOOS(pB) + '</td><td>' + (cntOOS(pA) - cntOOS(pB)) + '</td></tr></table>' +
+        '<div style="font-size:0.64rem;color:#666;margin-top:4px;">两图共用同一颜色标尺（' + scale.minD.toFixed(1) + '–' + scale.maxD.toFixed(1) + ' nm），可直接对比分布形状与色阶。</div>');
+}
+
+function persistLib() {
+    try {
+        const slim = waferLib.map(w => ({ meta: w.meta, pts: w.pts }));
+        localStorage.setItem(LIB_KEY, JSON.stringify(slim));
+    } catch (e) { /* 配额不足时仅保留会话 */ }
+}
+function restoreLib() {
+    try {
+        const arr = JSON.parse(localStorage.getItem(LIB_KEY));
+        if (Array.isArray(arr)) waferLib = arr.filter(w => w && w.meta && Array.isArray(w.pts));
+    } catch (e) { waferLib = []; }
+    renderLibList(); drawLotTrend(); refreshCmpSelects();
+}
+
+document.getElementById('btn-lib-save').addEventListener('click', saveWaferToLib);
+document.getElementById('btn-lib-clear').addEventListener('click', () => {
+    waferLib = [];
+    try { localStorage.removeItem(LIB_KEY); } catch (e) {}
+    renderLibList(); drawLotTrend(); refreshCmpSelects();
+    document.getElementById('cmp-result').innerHTML = '';
+    const cA = document.getElementById('cmp-canvas-a'), cB = document.getElementById('cmp-canvas-b');
+    [cA, cB].forEach(c => { if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height); });
+});
+document.getElementById('btn-cmp').addEventListener('click', runCompare);
 
 function computeStats(pts) {
     if (!pts || pts.length === 0) return null;
@@ -1335,6 +1616,12 @@ function buildResultCsv(points, meta) {
     const lines = [];
     lines.push('# ThinFilm-Vision 结果导出');
     lines.push('# 导出时间,' + meta.time);
+    if (meta.waferMeta) {
+        lines.push('# Lot ID,' + meta.waferMeta.lot);
+        lines.push('# Wafer ID,' + meta.waferMeta.wafer);
+        lines.push('# 机台/Chamber,' + meta.waferMeta.tool);
+        lines.push('# Recipe,' + meta.waferMeta.recipe);
+    }
     lines.push('# 点数,' + points.length + ' (参与统计 ' + meta.n + ' 点)');
     lines.push('# 均值(nm),' + meta.avg.toFixed(2));
     lines.push('# 极差(nm),' + meta.range.toFixed(2));
@@ -1361,6 +1648,7 @@ document.getElementById('btn-export-csv').addEventListener('click', () => {
     if (!s) { showImportError('所有点位均被边缘剔除，无可统计数据。'); return; }
     s.time = new Date().toLocaleString();
     s.jointA = document.getElementById('cfg-joint-a').checked;
+    s.waferMeta = getWaferMeta();
     s.layers = currentLayers.map((l, i) => ({ idx: i + 1, name: l.name, A: l.A, B: l.B, C: l.C, k: l.k, d: l.d, src: l.matSource || '手动输入' }));
     const csv = buildResultCsv(batchPoints, s);
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
@@ -1385,6 +1673,9 @@ function buildReportHtml() {
     let waferImg = '';
     try { waferImg = document.getElementById('wafer-canvas').toDataURL('image/png'); } catch (e) {}
     const hasA = pts.some(p => isFinite(p.fitA));
+    const wm = getWaferMeta();
+    const wmTxt = [wm.lot && ('Lot：' + wm.lot), wm.wafer && ('Wafer：' + wm.wafer),
+                   wm.tool && ('机台：' + wm.tool), wm.recipe && ('Recipe：' + wm.recipe)].filter(Boolean).join('　|　');
     const layerRows = currentLayers.map((l, i) =>
         '<tr><td>' + (i + 1) + '</td><td>' + escHtml(l.name) + '</td><td>' + l.A + '</td><td>' + l.B + '</td><td>' + l.C + '</td><td>' + l.k + '</td><td>' + l.d + '</td><td>' + (l.isTarget ? '✓' : '') + '</td><td>' + escHtml(l.matSource || '手动输入') + '</td></tr>').join('');
     const ptRows = pts.map(p => {
@@ -1401,7 +1692,8 @@ function buildReportHtml() {
         '.meta{color:#555;font-size:0.85rem}.kpi{display:flex;gap:16px;flex-wrap:wrap}.kpi div{background:#f6f6f6;border:1px solid #ddd;border-radius:6px;padding:8px 14px}' +
         '.kpi b{font-size:1.15rem}@media print{.noprint{display:none}}</style></head><body>' +
         '<h1>ThinFilm-Vision 检测报告</h1>' +
-        '<p class="meta">生成时间：' + escHtml(time) + '　|　工具版本：V4.6　|　点位数：' + pts.length + '（参与统计 ' + (s ? s.n : 0) + '）</p>' +
+        '<p class="meta">生成时间：' + escHtml(time) + '　|　工具版本：V4.7　|　点位数：' + pts.length + '（参与统计 ' + (s ? s.n : 0) + '）</p>' +
+        (wmTxt ? '<p class="meta">晶圆信息：' + escHtml(wmTxt) + '</p>' : '') +
         '<h2>SPC 汇总</h2><div class="kpi">' +
         (s ? '<div>均值<br><b>' + s.avg.toFixed(2) + ' nm</b></div><div>极差<br><b>' + s.range.toFixed(2) + ' nm</b></div>' +
         '<div>标准差<br><b>' + s.stdev.toFixed(3) + ' nm</b></div><div>Cpk<br><b>' + s.cpk.toFixed(2) + '</b></div>' +
@@ -1593,6 +1885,7 @@ document.getElementById('btn-load-sample').addEventListener('click', () => {
 // 初始化
 document.addEventListener("DOMContentLoaded", () => {
     loadSettings();
+    restoreLib();
     precomputeBannerMap();
     renderLayerStack();
     initDiagnosticChart();
