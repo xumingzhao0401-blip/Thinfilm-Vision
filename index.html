@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.2</title>
+    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.3</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -73,7 +73,7 @@
 <body>
 
 <header>
-    <h1>ThinFilm-Vision 量测分析系统 V4.2</h1>
+    <h1>ThinFilm-Vision 量测分析系统 V4.3</h1>
     <p>自适应分析台：高密度全谱数据插值 · 理论模型 LUT 并行加速 · 颜色边界约束防伪解</p>
 </header>
 
@@ -94,6 +94,9 @@
             <div class="bound-inputs" style="margin-bottom: 4px;">
                 <div><label>拟合窗口下限 (Min nm)</label><input type="number" id="param-bound-min" value="150"></div>
                 <div><label>拟合窗口上限 (Max nm)</label><input type="number" id="param-bound-max" value="450"></div>
+            </div>
+            <div style="margin: 0 0 4px 2px; font-size: 0.72rem; color: var(--text-dim);">
+                <label><input type="checkbox" id="cfg-joint-a" style="width: auto; accent-color: #34c759;"> 联立拟合 Cauchy A（厚度 + 折射率，耗时约翻倍）</label>
             </div>
             <div class="bound-inputs">
                 <div><label>控制下限 LSL (nm)</label><input type="number" id="spc-lsl" value="285"></div>
@@ -181,7 +184,7 @@
         </div>
 
         <div class="panel-title">7. 多谷自适应寻优日志</div>
-        <div class="log-area" id="log-box">等待输入矩阵流片数据...</div>
+        <div class="log-area" id="log-box">👋 三步上手：1) 点「加载 17点 厂内样本」或粘贴 CSV 数据  2) 确认膜层配方与拟合窗口  3) 点「⚡ 启动多线程反演」</div>
     </div>
 </div>
 
@@ -503,6 +506,22 @@ function drawBanner() {
     }
 }
 
+// 常用材料典型光学参数（初值，工艺相关，使用前请用已知样品校准）
+const MATERIAL_LIB = {
+    'SiO2':  { A: 1.458, B: 0.00354, C: 0, k: 0 },
+    'MgF2':  { A: 1.377, B: 0.003,   C: 0, k: 0 },
+    'Al2O3': { A: 1.754, B: 0.007,   C: 0, k: 0 },
+    'Si3N4': { A: 1.980, B: 0.015,   C: 0, k: 0 },
+    'Ta2O5': { A: 2.050, B: 0.015,   C: 0, k: 0 },
+    'TiO2':  { A: 2.380, B: 0.020,   C: 0, k: 0 }
+};
+function applyMaterialToLayer(layer, name) {
+    const m = MATERIAL_LIB[name];
+    if (!m) return false;
+    layer.name = name; layer.A = m.A; layer.B = m.B; layer.C = m.C; layer.k = m.k;
+    return true;
+}
+
 function renderLayerStack() {
     const container = document.getElementById('stack-container');
     if(!container) return;
@@ -513,6 +532,10 @@ function renderLayerStack() {
         div.innerHTML = `
             <div class="layer-header">
                 <span>层 #${i+1}: ${layer.name}</span>
+                <select id="mat-${i}" title="从材料库载入典型光学参数（初值，用前请校准）" style="font-size:0.65rem; background:#1e1e24; color:var(--text-dim); border:1px solid var(--border-color); border-radius:3px; padding:1px 2px;">
+                    <option value="">材料库…</option>
+                    ${Object.keys(MATERIAL_LIB).map(mk => `<option value="${mk}">${mk}</option>`).join('')}
+                </select>
                 <label style="font-size:0.65rem; color:#34c759;"><input type="radio" name="target-radio" ${layer.isTarget?'checked':''} onchange="switchFitTarget(${i})"> 激活拟合自变量</label>
             </div>
             <div class="layer-controls">
@@ -540,6 +563,12 @@ function renderLayerStack() {
                 clearTimeout(window.refreshTimer);
                 window.refreshTimer = setTimeout(() => { precomputeBannerMap(); drawBanner(); updateDiagnosticUI(); saveSettings(); }, 40);
             });
+        });
+        const matSel = document.getElementById('mat-' + i);
+        if (matSel) matSel.addEventListener('change', () => {
+            if (applyMaterialToLayer(layer, matSel.value)) {
+                renderLayerStack(); precomputeBannerMap(); drawBanner(); updateDiagnosticUI(); saveSettings();
+            }
         });
     });
 }
@@ -632,7 +661,13 @@ function drawWaferMap() {
     ctx.lineWidth = 1.2; ctx.strokeStyle = '#252530'; ctx.stroke();
     ctx.fillStyle = '#0b0b0d'; ctx.beginPath(); ctx.arc(r, r*2 - 3, 3, 0, Math.PI, true); ctx.fill();
 
-    if(batchPoints.length === 0) return;
+    if(batchPoints.length === 0) {
+        ctx.fillStyle = '#4a4a55'; ctx.font = '12px system-ui'; ctx.textAlign = 'center';
+        ctx.fillText('暂无数据', r, r - 10);
+        ctx.font = '10px system-ui'; ctx.fillStyle = '#3a3a44';
+        ctx.fillText('点击「加载 17点 厂内样本」或粘贴 CSV 后运行反演', r, r + 12);
+        return;
+    }
     refreshExclusion();
     const wcfg = getWaferConfig();
     const pxPerMm = (r - 15) / wcfg.radius;
@@ -701,6 +736,25 @@ const dynamicWorkerCodeBlob = `
         return Cpx.mag2(Cpx.div(Cpx.sub(B, C), Cpx.add(B, C)));
     }
 
+    // 任意波长处的精确 TMM（Si 衬底 n/k 在 1nm 网格上线性插值）
+    function runTMMAtWlInWorker(stack, wl, siN, siK) {
+        let sysM = [[Cpx.create(1), Cpx.create(0)], [Cpx.create(0), Cpx.create(1)]];
+        for (let i = 0; i < stack.length; i++) {
+            const lam_um = wl / 1000;
+            const n_wl = stack[i].A + (stack[i].B / Math.pow(lam_um, 2)) + (stack[i].C / Math.pow(lam_um, 4));
+            const q_j = Cpx.create(n_wl, -stack[i].k);
+            const delta = Cpx.create((2 * Math.PI * stack[i].d / wl) * n_wl, -(2 * Math.PI * stack[i].d / wl) * stack[i].k);
+            const cosD = Cpx.cos(delta); const sinD = Cpx.sin(delta);
+            const M_j = [[cosD, Cpx.div(Cpx.mul(Cpx.create(0,1), sinD), q_j)], [Cpx.mul(Cpx.mul(Cpx.create(0,1), q_j), sinD), cosD]];
+            sysM = matMul2x2(sysM, M_j);
+        }
+        const fi = Math.max(0, Math.min(400, wl - 380));
+        const g0 = Math.floor(fi), fg = fi - g0, g1 = Math.min(400, g0 + 1);
+        const q_sub = Cpx.create(siN[g0] * (1 - fg) + siN[g1] * fg, -(siK[g0] * (1 - fg) + siK[g1] * fg));
+        const B = Cpx.add(sysM[0][0], Cpx.mul(sysM[0][1], q_sub)); const C = Cpx.add(sysM[1][0], Cpx.mul(sysM[1][1], q_sub));
+        return Cpx.mag2(Cpx.div(Cpx.sub(B, C), Cpx.add(B, C)));
+    }
+
     function computeLabInWorker(stack, d65, cmfX, cmfY, cmfZ, siN, siK) {
         let X = 0, Y = 0, Z = 0, normY = 0;
         for (let i = 0; i < 401; i++) {
@@ -712,26 +766,87 @@ const dynamicWorkerCodeBlob = `
         return { L: 116 * f(Y) - 16, a: 500 * (f(X/0.95047) - f(Y)), b: 200 * (f(Y) - f(Z/1.08883)) };
     }
 
-    function gaussNewtonRefine(pt, currentD, finalStack, fitIdx, siN, siK) {
-        const gridLen = 401; const deltaD = 0.05; let JtJ = 0, finalMSE = 0;
-        for (let iter = 0; iter < 10; iter++) {
-            JtJ = 0; let Jtf = 0; let errSum = 0;
-            finalStack[fitIdx].d = currentD;
-            let f0 = new Float32Array(gridLen);
-            for (let g = 0; g < gridLen; g++) f0[g] = runTMMInWorker(finalStack, 380+g, g, siN, siK);
-            finalStack[fitIdx].d = currentD + deltaD;
-            let fPlus = new Float32Array(gridLen);
-            for (let g = 0; g < gridLen; g++) fPlus[g] = runTMMInWorker(finalStack, 380+g, g, siN, siK);
-            for (let g = 0; g < gridLen; g++) {
-                let J = (fPlus[g] - f0[g]) / deltaD; let res = pt.spectrum[g] - f0[g];
-                errSum += res * res; JtJ += J * J; Jtf += J * res;
+    // 自适应 Levenberg-Marquardt：残差只在实测波长上计算（mask），支持 [d] 或 [d, A] 联立
+    function lmRefine(pt, p0, bounds, finalStack, fitIdx, jointA, siN, siK) {
+        const m = pt.measWl.length;
+        const nP = jointA ? 2 : 1;
+        const deltas = [0.05, 0.002];
+        const maxStep = [8, 0.05];
+        let p = p0.slice();
+        const modelAt = (pp) => {
+            finalStack[fitIdx].d = pp[0];
+            if (jointA) finalStack[fitIdx].A = pp[1];
+            const f = new Float64Array(m);
+            for (let j = 0; j < m; j++) f[j] = runTMMAtWlInWorker(finalStack, pt.measWl[j], siN, siK);
+            return f;
+        };
+        const sseOf = (f) => { let s = 0; for (let j = 0; j < m; j++) { const r = pt.measR[j] - f[j]; s += r * r; } return s; };
+        const jacobianCols = (pp, ff) => {
+            const cols = [];
+            for (let k = 0; k < nP; k++) {
+                const trial = pp.slice();
+                let tk = trial[k] + deltas[k];
+                if (tk > bounds[k][1]) tk = trial[k] - deltas[k]; // 上界处改用后向差分，避免 h 归零
+                trial[k] = Math.max(bounds[k][0], Math.min(bounds[k][1], tk));
+                let h = trial[k] - pp[k]; if (Math.abs(h) < 1e-12) h = deltas[k];
+                const f1 = modelAt(trial);
+                const col = new Float64Array(m);
+                for (let j = 0; j < m; j++) col[j] = (f1[j] - ff[j]) / h;
+                cols.push(col);
             }
-            let step = Jtf / (JtJ + 0.02);
-            if (Math.abs(step) > 8) step = step > 0 ? 8 : -8;
-            currentD += step; finalMSE = errSum / gridLen;
-            if (Math.abs(step) < 0.01) break;
+            return cols;
+        };
+        let f = modelAt(p);
+        let sse = sseOf(f);
+        let lambda = 0.01, nu = 2;
+        for (let iter = 0; iter < 25; iter++) {
+            const cols = jacobianCols(p, f);
+            let a11 = 0, a12 = 0, a22 = 0, b1 = 0, b2 = 0;
+            for (let j = 0; j < m; j++) {
+                const rj = pt.measR[j] - f[j];
+                const c0 = cols[0][j]; a11 += c0 * c0; b1 += c0 * rj;
+                if (nP > 1) { const c1 = cols[1][j]; a12 += c0 * c1; a22 += c1 * c1; b2 += c1 * rj; }
+            }
+            const l11 = a11 * (1 + lambda), l22 = a22 * (1 + lambda), l12 = a12;
+            let s0 = 0, s1 = 0;
+            if (nP === 1) { s0 = b1 / (l11 + 1e-300); }
+            else {
+                const det = l11 * l22 - l12 * l12;
+                if (Math.abs(det) < 1e-300) break;
+                s0 = (b1 * l22 - b2 * l12) / det;
+                s1 = (l11 * b2 - l12 * b1) / det;
+            }
+            s0 = Math.max(-maxStep[0], Math.min(maxStep[0], s0));
+            s1 = Math.max(-maxStep[1], Math.min(maxStep[1], s1));
+            const pT = [Math.max(bounds[0][0], Math.min(bounds[0][1], p[0] + s0)), p[1] + s1];
+            if (nP > 1) pT[1] = Math.max(bounds[1][0], Math.min(bounds[1][1], pT[1]));
+            const fT = modelAt(pT), sseT = sseOf(fT);
+            const pred = s0 * (b1 - 0.5 * (a11 * s0 + a12 * s1)) + (nP > 1 ? s1 * (b2 - 0.5 * (a12 * s0 + a22 * s1)) : 0);
+            const rho = pred > 1e-300 ? (sse - sseT) / pred : -1;
+            if (rho > 0) {
+                p = pT; f = fT; sse = sseT;
+                lambda = Math.max(1e-7, lambda * Math.max(1 / 3, 1 - Math.pow(2 * rho - 1, 3)));
+                nu = 2;
+                if (Math.abs(s0) < 0.005 && (nP === 1 || Math.abs(s1) < 0.0002)) break;
+            } else {
+                lambda *= nu; nu *= 2;
+                if (lambda > 1e7) break;
+            }
         }
-        return { d: currentD, mse: finalMSE, JtJ: JtJ };
+        const cols = jacobianCols(p, f);
+        let a11 = 0, a12 = 0, a22 = 0;
+        for (let j = 0; j < m; j++) {
+            const c0 = cols[0][j]; a11 += c0 * c0;
+            if (nP > 1) { const c1 = cols[1][j]; a12 += c0 * c1; a22 += c1 * c1; }
+        }
+        const mse = sse / m;
+        let varD;
+        if (nP === 1) { varD = a11 > 1e-300 ? mse / a11 : 0.25; }
+        else {
+            const det = a11 * a22 - a12 * a12;
+            varD = det > 1e-300 ? mse * (a22 / det) : 0.25;
+        }
+        return { d: p[0], A: jointA ? p[1] : null, mse: mse, sigma: Math.sqrt(Math.max(varD, 0)) };
     }
 
     self.onmessage = function(e) {
@@ -754,7 +869,10 @@ const dynamicWorkerCodeBlob = `
             return;
         }
         const nT = d.maxBound - d.minBound + 1;
+        const jointA = !!d.jointA;
+        const bounds = [[d.minBound, d.maxBound], [1.0, 3.5]];
         d.points.forEach((pt, pIdx) => {
+            const m = pt.measWl.length;
             let X = 0, Y = 0, Z = 0, normY = 0;
             for (let i = 0; i < 401; i++) {
                 const R = pt.spectrum[i], il = d.constants.d65[i];
@@ -764,25 +882,37 @@ const dynamicWorkerCodeBlob = `
             const f = (t) => t > 0.008856 ? Math.pow(t, 1/3) : (7.787 * t) + (16/116);
             const expLab = { L: 116*f(Y)-16, a: 500*(f(X/0.95047)-f(Y)), b: 200*(f(Y)-f(Z/1.08883)) };
 
+            // 粗扫描：在实测波长上 mask 比较（LUT 在波长维线性插值）
+            const maskedErr = (ti) => {
+                let sErr = 0;
+                for (let j = 0; j < m; j++) {
+                    const fi = pt.measWl[j] - 380;
+                    const gc = Math.max(0, Math.min(400, Math.floor(fi)));
+                    const fg = Math.max(0, Math.min(1, fi - Math.floor(fi)));
+                    const g1 = Math.min(400, gc + 1);
+                    const model = d.lutSpec[ti * 401 + gc] * (1 - fg) + d.lutSpec[ti * 401 + g1] * fg;
+                    const df = pt.measR[j] - model; sErr += df * df;
+                }
+                return sErr / m;
+            };
             let bestScanD = d.minBound, minScanMSE = Infinity;
             for (let ti = 0; ti < nT; ti++) {
                 const dE = Math.sqrt((expLab.L-d.lutLab[ti*3])**2 + (expLab.a-d.lutLab[ti*3+1])**2 + (expLab.b-d.lutLab[ti*3+2])**2);
                 if (dE > d.deltaEThresh) continue;
-                let sErr = 0; const off = ti * 401;
-                for (let g = 0; g < 401; g++) { const df = pt.spectrum[g] - d.lutSpec[off+g]; sErr += df * df; }
+                const sErr = maskedErr(ti);
                 if (sErr < minScanMSE) { minScanMSE = sErr; bestScanD = d.minBound + ti; }
             }
             if (minScanMSE === Infinity) {
                 for (let ti = 0; ti < nT; ti++) {
-                    let sErr = 0; const off = ti * 401;
-                    for (let g = 0; g < 401; g++) { const df = pt.spectrum[g] - d.lutSpec[off+g]; sErr += df * df; }
+                    const sErr = maskedErr(ti);
                     if (sErr < minScanMSE) { minScanMSE = sErr; bestScanD = d.minBound + ti; }
                 }
             }
             const finalStack = JSON.parse(JSON.stringify(d.currentLayers));
-            const rr = gaussNewtonRefine(pt, bestScanD, finalStack, d.fitIdx, d.constants.siN, d.constants.siK);
-            pt.fitD = rr.d; pt.mse = rr.mse;
-            pt.sigma = rr.JtJ > 0 ? Math.sqrt(rr.mse / rr.JtJ) : 0.5;
+            const p0 = jointA ? [bestScanD, finalStack[d.fitIdx].A] : [bestScanD];
+            const rr = lmRefine(pt, p0, bounds, finalStack, d.fitIdx, jointA, d.constants.siN, d.constants.siK);
+            pt.fitD = rr.d; pt.mse = rr.mse; pt.sigma = rr.sigma;
+            if (jointA) pt.fitA = rr.A;
             if ((pIdx + 1) % 2 === 0 || (pIdx + 1) === d.points.length) {
                 self.postMessage({ type: 'progress', done: pIdx + 1, total: d.points.length, workerId: d.workerId });
             }
@@ -886,12 +1016,15 @@ function parseSpectrumTable(rawText) {
         if (isNaN(x) || isNaN(y)) throw new Error("第 " + (i + 1) + " 行空间坐标 (X, Y) 包含非数字。");
         const sparse = {};
         const vals = rawVals[i - r0];
+        const measR = new Float32Array(wavelengths.length);
         for (let k = 0; k < wavelengths.length; k++) {
             const v = vals[k] * scale;
             if (v < 0 || v > 1) throw new Error("第 " + (i + 1) + " 行反射率超出 0–1 范围。");
             sparse[wavelengths[k]] = v;
+            measR[k] = v;
         }
-        points.push({ id, x, y, spectrum: interpolateTo1nmGrid(sparse), fitD: 0, sigma: 0, mse: 0 });
+        // spectrum: 401 点插值仅用于显示；measWl/measR: 实测波长与反射率，用于 mask 拟合
+        points.push({ id, x, y, spectrum: interpolateTo1nmGrid(sparse), measWl: wavelengths.slice(), measR: measR, fitD: 0, sigma: 0, mse: 0 });
     }
     return { points, note, formatDesc };
 }
@@ -904,6 +1037,7 @@ document.getElementById('btn-batch-fit').addEventListener('click', () => {
     const minB = parseFloat(document.getElementById('param-bound-min').value) || 100;
     const maxB = parseFloat(document.getElementById('param-bound-max').value) || 500;
     const maxDeConfig = parseFloat(document.getElementById('cfg-max-de').value) || 6.5;
+    const jointA = document.getElementById('cfg-joint-a').checked;
     let fitIdx = currentLayers.findIndex(l => l.isTarget); if(fitIdx === -1) fitIdx = 0;
 
     try {
@@ -951,7 +1085,8 @@ document.getElementById('btn-batch-fit').addEventListener('click', () => {
             w.postMessage({
                 mode: 'fit', workerId: wi, points: chunk.points,
                 lutSpec: lutSpec, lutLab: lutLab, minBound: lo, maxBound: hi, fitIdx: fitIdx,
-                currentLayers: currentLayers, constants: Grid.getConstants(), deltaEThresh: maxDeConfig
+                currentLayers: currentLayers, constants: Grid.getConstants(), deltaEThresh: maxDeConfig,
+                jointA: jointA
             });
             w.onmessage = function(ev) {
                 if (ev.data.type === 'progress') {
@@ -981,6 +1116,12 @@ function finalizeBatchFit(results) {
     currentLayers[fIdx].d = batchPoints[0].fitD;
     document.getElementById('d-' + fIdx).value = batchPoints[0].fitD.toFixed(1);
     document.getElementById('log-box').innerText += "\n统计：全片反演计算完毕。数据校验收敛完成。";
+    if (document.getElementById('cfg-joint-a').checked && isFinite(batchPoints[0].fitA)) {
+        currentLayers[fIdx].A = batchPoints[0].fitA;
+        document.getElementById('a-' + fIdx).value = batchPoints[0].fitA.toFixed(4);
+        const meanA = batchPoints.reduce((s, p) => s + (isFinite(p.fitA) ? p.fitA : 0), 0) / batchPoints.length;
+        document.getElementById('log-box').innerText += "\n联立拟合 Cauchy A：首点 A=" + batchPoints[0].fitA.toFixed(4) + "，全片均值 " + meanA.toFixed(4) + "（已同步至目标层配方）。";
+    }
     calculateSPCStats();
     updateDiagnosticUI();
     drawWaferMap();
@@ -1045,10 +1186,12 @@ function buildResultCsv(points, meta) {
     lines.push('# 标准差(nm),' + meta.stdev.toFixed(3));
     lines.push('# Cpk,' + meta.cpk.toFixed(2));
     lines.push('# LSL/USL(nm),' + meta.lsl + '/' + meta.usl);
-    lines.push('ID,X(mm),Y(mm),厚度(nm),1σ(nm),MSE,超规,边缘剔除');
+    lines.push('ID,X(mm),Y(mm),厚度(nm),1σ(nm),MSE,超规,边缘剔除' + (meta.jointA ? ',拟合A' : ''));
     points.forEach(p => {
-        lines.push([p.id, p.x, p.y, p.fitD.toFixed(2), p.sigma.toFixed(3), p.mse.toExponential(4),
-            (p.fitD < meta.lsl || p.fitD > meta.usl) ? '是' : '否', p.excluded ? '是' : '否'].join(','));
+        const row = [p.id, p.x, p.y, p.fitD.toFixed(2), p.sigma.toFixed(3), p.mse.toExponential(4),
+            (p.fitD < meta.lsl || p.fitD > meta.usl) ? '是' : '否', p.excluded ? '是' : '否'];
+        if (meta.jointA) row.push(isFinite(p.fitA) ? p.fitA.toFixed(4) : '');
+        lines.push(row.join(','));
     });
     return lines.join('\n');
 }
@@ -1059,6 +1202,7 @@ document.getElementById('btn-export-csv').addEventListener('click', () => {
     const s = computeStats(statsPoints());
     if (!s) { showImportError('所有点位均被边缘剔除，无可统计数据。'); return; }
     s.time = new Date().toLocaleString();
+    s.jointA = document.getElementById('cfg-joint-a').checked;
     const csv = buildResultCsv(batchPoints, s);
     const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
@@ -1087,6 +1231,7 @@ function saveSettings() {
         const g = (id) => document.getElementById(id).value;
         localStorage.setItem(SETTINGS_KEY, JSON.stringify({
             layers: currentLayers,
+            jointA: document.getElementById('cfg-joint-a').checked,
             boundMin: g('param-bound-min'), boundMax: g('param-bound-max'),
             lsl: g('spc-lsl'), usl: g('spc-usl'),
             maxMse: g('cfg-max-mse'), maxSigma: g('cfg-max-sigma'), maxDe: g('cfg-max-de'),
@@ -1104,6 +1249,7 @@ function loadSettings() {
         set('spc-lsl', s.lsl); set('spc-usl', s.usl);
         set('cfg-max-mse', s.maxMse); set('cfg-max-sigma', s.maxSigma); set('cfg-max-de', s.maxDe);
         set('cfg-wafer-dia', s.waferDia); set('cfg-edge-excl', s.edgeExcl);
+        if (s.jointA !== undefined) document.getElementById('cfg-joint-a').checked = !!s.jointA;
         return true;
     } catch (e) { return false; }
 }
