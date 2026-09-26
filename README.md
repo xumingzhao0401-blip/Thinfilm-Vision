@@ -1,8 +1,15 @@
-# ThinFilm-Vision 专业版自适应量测与诊断系统 V4.7
+# ThinFilm-Vision 专业版自适应量测与诊断系统 V4.8
 https://xumingzhao0401-blip.github.io/Thinfilm-Vision/
 基于 Web 的工业级薄膜厚度光学量测工具。利用传递矩阵法 (TMM) 与 CIELAB 色彩约束，从反射率光谱中精确反演薄膜厚度，支持多层 Cauchy 色散模型、全局寻优防伪解、多线程并行计算以及晶圆级厚度分布可视化。
 
 ---
+
+## 🆕 V4.8 更新日志
+
+- **📦 批量多片导入**：输入框支持用空行分块一次粘贴整个 Lot（25 片），每块前用 `# Wafer: / # Lot: / # Tool: / # Recipe:` 注释标注身份；点「启动多线程反演」后 LUT 只构建一次、逐片反演并自动入库，同 Lot+Wafer 自动去重。单片粘贴保持原有行为不变。
+- **🏭 趋势图分组**：Lot 趋势新增「按机台分组 / 按 Lot 分组」，不同机台用不同颜色画趋势线，附分组图例与每组 n / 片均值 / 平均 Cpk 汇总——PE 定位 excursion 到机台、EE 做 chamber matching 的直接依据。
+- **🔧 重构**：反演流程拆为 `buildLutAsync` + `fitPointsWithLut` 供单片/批量复用；`saveWaferToLib` 抽取 `addWaferToLib(meta, points)`。
+- **✅ 测试**：新增 12 项 V4.8 测试（多块解析/注释标签/容错、入库去重、分组趋势汇总、重构回归），总计 72 项全过。
 
 ## 🆕 V4.7 更新日志（Fab 视角：从单片计算器到产线工具）
 
