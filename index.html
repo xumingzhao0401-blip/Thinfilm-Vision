@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.5</title>
+    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.6</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -73,7 +73,7 @@
 <body>
 
 <header>
-    <h1>ThinFilm-Vision 量测分析系统 V4.5</h1>
+    <h1>ThinFilm-Vision 量测分析系统 V4.6</h1>
     <p>自适应分析台：高密度全谱数据插值 · 理论模型 LUT 并行加速 · 颜色边界约束防伪解</p>
 </header>
 
@@ -147,6 +147,9 @@
             <canvas id="wafer-canvas" width="140" height="140"></canvas>
             <div class="map-legend-bar" id="map-legend"></div>
             <div class="legend-labels"><span id="lg-min">- nm</span><span id="lg-mid">- nm</span><span id="lg-max">- nm</span></div>
+            <label style="font-size:0.7rem;color:#aaa;display:flex;align-items:center;gap:5px;margin-top:5px;cursor:pointer;user-select:none;">
+                <input type="checkbox" id="cfg-wafer-interp" checked style="accent-color:#4a9eff;"> 全片插值伪彩 (IDW)
+            </label>
             
             <div style="display: flex; align-items: center; gap: 8px; margin-top: 6px; width: 100%; background: #13131a; padding: 4px; border-radius: 4px; border: 1px solid #24242c;">
                 <div id="wafer-color" style="width: 14px; height: 14px; border-radius: 50%; border: 1px solid #fff; background-color: #fff; transition: background 0.1s;"></div>
@@ -441,15 +444,29 @@ function labToHex(L, a, b) {
     return `#${((1 << 24) + (g(rl) << 16) + (g(gl) << 8) + g(bl)).toString(16).slice(1).toUpperCase()}`;
 }
 
-function getViridisColor(ratio) {
-    const points = [
-        {r: 68,  g: 1,   b: 84}, {r: 49,  g: 104, b: 142}, {r: 33,  g: 145, b: 140}, {r: 94,  g: 201, b: 98}, {r: 253, g: 231, b: 37}
-    ];
+function getViridisRgb(ratio) {
+    const points = [[68,1,84],[49,104,142],[33,145,140],[94,201,98],[253,231,37]];
     ratio = Math.max(0, Math.min(1, ratio));
-    let segment = ratio * 4; let i = Math.floor(segment);
-    if (i >= 4) return `rgb(${points[4].r}, ${points[4].g}, ${points[4].b})`;
-    let t = segment - i; let p0 = points[i], p1 = points[i+1];
-    return `rgb(${Math.round(p0.r+(p1.r-p0.r)*t)}, ${Math.round(p0.g+(p1.g-p0.g)*t)}, ${Math.round(p0.b+(p1.b-p0.b)*t)})`;
+    const segment = ratio * 4; const i = Math.floor(segment);
+    if (i >= 4) return points[4].slice();
+    const t = segment - i, p0 = points[i], p1 = points[i+1];
+    return [Math.round(p0[0]+(p1[0]-p0[0])*t), Math.round(p0[1]+(p1[1]-p0[1])*t), Math.round(p0[2]+(p1[2]-p0[2])*t)];
+}
+function getViridisColor(ratio) {
+    const c = getViridisRgb(ratio);
+    return `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+}
+
+// 反距离加权插值 (IDW, p=2)：由离散点位厚度估算晶圆上任意位置厚度
+function idwThickness(x, y, pts) {
+    let num = 0, den = 0;
+    for (const q of pts) {
+        const d2 = (x - q.x) * (x - q.x) + (y - q.y) * (y - q.y);
+        if (d2 < 1e-12) return q.fitD;
+        const w = 1 / d2;
+        num += w * q.fitD; den += w;
+    }
+    return den > 0 ? num / den : NaN;
 }
 
 // =========================================================================
@@ -715,6 +732,41 @@ function drawWaferMap() {
     document.getElementById('lg-mid').innerText = ((minD + maxD)/2).toFixed(1) + " nm";
     document.getElementById('lg-max').innerText = maxD.toFixed(1) + " nm";
     if(legendCanvas) legendCanvas.style.background = `linear-gradient(to right, rgb(68,1,84), rgb(49,104,142), rgb(33,145,140), rgb(94,201,98), rgb(253,231,37))`;
+
+    // ---- 全片插值伪彩 (IDW)：有效点>=3 才做 ----
+    const interpOn = document.getElementById('cfg-wafer-interp')?.checked !== false;
+    const validPts = mapPts.filter(p => !p.excluded && Number.isFinite(p.fitD));
+    if (interpOn && validPts.length >= 3) {
+        const S = 2, w = Math.floor(canvas.width / S), h = Math.floor(canvas.height / S);
+        const off = document.createElement('canvas'); off.width = w; off.height = h;
+        const octx = off.getContext('2d');
+        const img = octx.createImageData(w, h);
+        for (let py = 0; py < h; py++) {
+            for (let px = 0; px < w; px++) {
+                const mx = ((px * S + S / 2) - r) / pxPerMm;   // mm, x 右为正
+                const my = (r - (py * S + S / 2)) / pxPerMm;   // mm, y 上为正
+                const idx = (py * w + px) * 4;
+                if (Math.hypot(mx, my) > wcfg.radius) { img.data[idx + 3] = 0; continue; }
+                const v = idwThickness(mx, my, validPts);
+                const c = getViridisRgb((v - minD) / delta);
+                img.data[idx] = c[0]; img.data[idx + 1] = c[1]; img.data[idx + 2] = c[2]; img.data[idx + 3] = 255;
+            }
+        }
+        octx.putImageData(img, 0, 0);
+        ctx.save();
+        ctx.beginPath(); ctx.arc(r, r, r - 5, 0, Math.PI * 2); ctx.clip();
+        ctx.drawImage(off, 0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        // 边缘剔除环压暗
+        if (wcfg.excl > 0) {
+            const rOut = r - 5, rIn = rOut * (wcfg.radius - wcfg.excl) / wcfg.radius;
+            ctx.save();
+            ctx.beginPath(); ctx.arc(r, r, rOut, 0, Math.PI * 2); ctx.clip();
+            ctx.beginPath(); ctx.arc(r, r, rOut, 0, Math.PI * 2); ctx.arc(r, r, rIn, 0, Math.PI * 2, true);
+            ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fill();
+            ctx.restore();
+        }
+    }
 
     batchPoints.forEach((pt, idx) => {
         let cx = r + pt.x * pxPerMm; let cy = r - pt.y * pxPerMm;
@@ -1349,7 +1401,7 @@ function buildReportHtml() {
         '.meta{color:#555;font-size:0.85rem}.kpi{display:flex;gap:16px;flex-wrap:wrap}.kpi div{background:#f6f6f6;border:1px solid #ddd;border-radius:6px;padding:8px 14px}' +
         '.kpi b{font-size:1.15rem}@media print{.noprint{display:none}}</style></head><body>' +
         '<h1>ThinFilm-Vision 检测报告</h1>' +
-        '<p class="meta">生成时间：' + escHtml(time) + '　|　工具版本：V4.5　|　点位数：' + pts.length + '（参与统计 ' + (s ? s.n : 0) + '）</p>' +
+        '<p class="meta">生成时间：' + escHtml(time) + '　|　工具版本：V4.6　|　点位数：' + pts.length + '（参与统计 ' + (s ? s.n : 0) + '）</p>' +
         '<h2>SPC 汇总</h2><div class="kpi">' +
         (s ? '<div>均值<br><b>' + s.avg.toFixed(2) + ' nm</b></div><div>极差<br><b>' + s.range.toFixed(2) + ' nm</b></div>' +
         '<div>标准差<br><b>' + s.stdev.toFixed(3) + ' nm</b></div><div>Cpk<br><b>' + s.cpk.toFixed(2) + '</b></div>' +
@@ -1380,6 +1432,8 @@ document.getElementById('btn-report').addEventListener('click', () => {
         refreshExclusion(); drawBanner(); drawWaferMap(); calculateSPCStats(); saveSettings();
     });
 });
+// 插值伪彩开关：仅重绘晶圆图
+document.getElementById('cfg-wafer-interp').addEventListener('change', () => { drawWaferMap(); saveSettings(); });
 // 色带点击：把点击位置的厚度设为目标层分析厚度
 document.getElementById('colormap-canvas').addEventListener('click', (ev) => {
     const rect = ev.currentTarget.getBoundingClientRect();
@@ -1400,7 +1454,8 @@ function saveSettings() {
             boundMin: g('param-bound-min'), boundMax: g('param-bound-max'),
             lsl: g('spc-lsl'), usl: g('spc-usl'),
             maxMse: g('cfg-max-mse'), maxSigma: g('cfg-max-sigma'), maxDe: g('cfg-max-de'),
-            waferDia: g('cfg-wafer-dia'), edgeExcl: g('cfg-edge-excl')
+            waferDia: g('cfg-wafer-dia'), edgeExcl: g('cfg-edge-excl'),
+            waferInterp: document.getElementById('cfg-wafer-interp').checked
         }));
     } catch (e) {}
 }
@@ -1415,6 +1470,7 @@ function loadSettings() {
         set('cfg-max-mse', s.maxMse); set('cfg-max-sigma', s.maxSigma); set('cfg-max-de', s.maxDe);
         set('cfg-wafer-dia', s.waferDia); set('cfg-edge-excl', s.edgeExcl);
         if (s.jointA !== undefined) document.getElementById('cfg-joint-a').checked = !!s.jointA;
+        if (s.waferInterp !== undefined) document.getElementById('cfg-wafer-interp').checked = !!s.waferInterp;
         return true;
     } catch (e) { return false; }
 }
