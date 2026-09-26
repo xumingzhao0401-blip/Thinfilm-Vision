@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.7</title>
+    <title>ThinFilm-Vision 专业版自适应量测与诊断系统 V4.8</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -87,7 +87,7 @@
 <body>
 
 <header>
-    <h1>ThinFilm-Vision 量测分析系统 V4.7</h1>
+    <h1>ThinFilm-Vision 量测分析系统 V4.8</h1>
     <p>自适应分析台：高密度全谱数据插值 · 理论模型 LUT 并行加速 · 颜色边界约束防伪解</p>
 </header>
 
@@ -183,7 +183,13 @@
             <div class="progress-bar-fill" id="prog-fill"></div>
             <div class="progress-text" id="prog-text">处理中: 0 / 0 点</div>
         </div>
-        <textarea id="csv-import" placeholder="点ID   X坐标   Y坐标   380nm反射率   430nm反射率 ... (稀疏模式支持9点，密集全谱输入支持401点)"></textarea>
+        <textarea id="csv-import" placeholder="点ID   X坐标   Y坐标   380nm反射率   430nm反射率 ... (稀疏模式支持9点，密集全谱输入支持401点)
+
+多片批量：用空行分块，每块前可用 # 注释标注身份，点「启动多线程反演」后逐片反演并自动入库：
+# Wafer: W01
+# Lot: LOT2026092601
+# Tool: PVD-03/Ch-A
+点ID   X   Y   380nm ... (数据行)"></textarea>
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
             <button id="btn-load-sample" style="background-color: #24242c;">加载 17点 厂内样本</button>
@@ -220,8 +226,16 @@
         </div>
         <div class="lib-list" id="wafer-lib-list"></div>
 
-        <div class="panel-subtitle">📈 Lot 趋势（库内各片：均值 / 极差）</div>
+        <div class="panel-subtitle" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>📈 Lot 趋势（库内各片：均值 / 极差）</span>
+            <select id="trend-group" style="background:#0f0f12;color:#ccc;border:1px solid #2a2a32;border-radius:4px;font-size:0.66rem;padding:2px 4px;font-weight:normal;">
+                <option value="none">不分组</option>
+                <option value="tool">按机台分组</option>
+                <option value="lot">按 Lot 分组</option>
+            </select>
+        </div>
         <canvas id="lot-trend-canvas" width="300" height="132" style="width:100%;background:#0f0f12;border:1px solid #24242c;border-radius:4px;"></canvas>
+        <div id="trend-group-summary" style="font-size:0.66rem;color:#888;margin-top:4px;line-height:1.6;"></div>
 
         <div class="panel-subtitle">⚖️ A/B 对比（PM 前后 / Chamber matching）</div>
         <div style="display: flex; gap: 4px; align-items: center;">
@@ -1184,82 +1198,153 @@ function parseSpectrumTable(rawText) {
     return { points, note, formatDesc };
 }
 
-document.getElementById('btn-batch-fit').addEventListener('click', () => {
+function setProgress(done, total, label) {
+    const pct = total > 0 ? Math.round(done / total * 100) : 0;
+    document.getElementById('prog-fill').style.width = pct + "%";
+    document.getElementById('prog-text').innerText = label + ": " + done + " / " + total;
+}
+
+// LUT 构建（Promise 化，供单片/多片批量复用）
+function buildLutAsync() {
+    return new Promise((resolve, reject) => {
+        const minB = parseFloat(document.getElementById('param-bound-min').value) || 100;
+        const maxB = parseFloat(document.getElementById('param-bound-max').value) || 500;
+        let fitIdx = currentLayers.findIndex(l => l.isTarget); if (fitIdx === -1) fitIdx = 0;
+        const workerURL = URL.createObjectURL(new Blob([dynamicWorkerCodeBlob], { type: 'application/javascript' }));
+        const w = new Worker(workerURL);
+        w.postMessage({ mode: 'lut', currentLayers, minBound: minB, maxBound: maxB, fitIdx, constants: Grid.getConstants() });
+        w.onmessage = (e) => {
+            if (e.data.type === 'lut-progress') { setProgress(e.data.done, e.data.total, '构建 LUT'); return; }
+            if (e.data.type !== 'lut-done') return;
+            w.terminate();
+            resolve({ workerURL: workerURL, lutSpec: e.data.lutSpec, lutLab: e.data.lutLab, lo: e.data.minBound, hi: e.data.maxBound, fitIdx: fitIdx });
+        };
+        w.onerror = (err) => { w.terminate(); URL.revokeObjectURL(workerURL); reject(new Error('LUT 构建异常: ' + (err.message || err))); };
+    });
+}
+
+// 用已构建的 LUT 对一组点做多 Worker 并行反演
+function fitPointsWithLut(lut, points, label) {
+    return new Promise((resolve, reject) => {
+        const maxDeConfig = parseFloat(document.getElementById('cfg-max-de').value) || 6.5;
+        const jointA = document.getElementById('cfg-joint-a').checked;
+        const K = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, points.length));
+        const chunks = [];
+        const per = Math.ceil(points.length / K);
+        for (let i = 0; i < K; i++) {
+            const start = i * per;
+            if (start >= points.length) break;
+            chunks.push({ start: start, points: points.slice(start, Math.min(start + per, points.length)) });
+        }
+        const progByWorker = new Array(chunks.length).fill(0);
+        const merged = new Array(points.length);
+        let doneWorkers = 0;
+        chunks.forEach((chunk, wi) => {
+            const w = new Worker(lut.workerURL);
+            w.postMessage({
+                mode: 'fit', workerId: wi, points: chunk.points,
+                lutSpec: lut.lutSpec, lutLab: lut.lutLab, minBound: lut.lo, maxBound: lut.hi, fitIdx: lut.fitIdx,
+                currentLayers: currentLayers, constants: Grid.getConstants(), deltaEThresh: maxDeConfig,
+                jointA: jointA
+            });
+            w.onmessage = (ev) => {
+                if (ev.data.type === 'progress') {
+                    progByWorker[wi] = ev.data.done;
+                    setProgress(progByWorker.reduce((a, b) => a + b, 0), points.length, label || '已处理');
+                } else if (ev.data.type === 'done') {
+                    ev.data.results.forEach((pt, j) => { merged[chunk.start + j] = pt; });
+                    w.terminate();
+                    if (++doneWorkers === chunks.length) resolve(merged);
+                }
+            };
+            w.onerror = (err) => { w.terminate(); reject(new Error('Worker 反演异常: ' + (err.message || err))); };
+        });
+    });
+}
+
+// 多片文本解析：空行分块；每块可用 # 注释行标注身份（# Wafer: / # Lot: / # Tool: / # Recipe:）
+function parseMultiWaferText(rawText) {
+    const chunks = rawText.split(/\n\s*\n/).map(s => s.trim()).filter(s => s.length);
+    if (!chunks.length) throw new Error('未检测到有效数据块。');
+    return chunks.map((chunk, ci) => {
+        const meta = {};
+        const dataLines = [];
+        chunk.split('\n').forEach(ln => {
+            const t = ln.trim();
+            const m = t.match(/^#\s*(wafer|lot|tool|recipe)\s*[:=]\s*(.+)$/i);
+            if (m) { meta[m[1].toLowerCase()] = m[2].trim(); }
+            else if (t && !t.startsWith('#')) dataLines.push(ln);
+        });
+        if (!dataLines.length) throw new Error('第 ' + (ci + 1) + ' 数据块没有数据行。');
+        const parsed = parseSpectrumTable(dataLines.join('\n'));
+        return { meta: meta, points: parsed.points, note: parsed.note, formatDesc: parsed.formatDesc };
+    });
+}
+
+document.getElementById('btn-batch-fit').addEventListener('click', async () => {
     const rawText = document.getElementById('csv-import').value.trim();
     if(!rawText) return;
-    
-    let logBox = document.getElementById('log-box'); logBox.innerText = "⚙️ 调集本地多线程矩阵优化求解器...\n";
-    const minB = parseFloat(document.getElementById('param-bound-min').value) || 100;
-    const maxB = parseFloat(document.getElementById('param-bound-max').value) || 500;
-    const maxDeConfig = parseFloat(document.getElementById('cfg-max-de').value) || 6.5;
-    const jointA = document.getElementById('cfg-joint-a').checked;
-    let fitIdx = currentLayers.findIndex(l => l.isTarget); if(fitIdx === -1) fitIdx = 0;
 
+    let logBox = document.getElementById('log-box');
+    let blocks;
     try {
-        const parsed = parseSpectrumTable(rawText);
-        batchPoints = parsed.points;
+        blocks = parseMultiWaferText(rawText);
         hideImportError();
-        logBox.innerText += "📥 数据解析成功: " + parsed.points.length + " 点 (" + parsed.formatDesc + ")。\n";
-        if (parsed.note) logBox.innerText += parsed.note + "\n";
     } catch(err) {
         showImportError(err.message); return;
     }
 
-    const setProgress = (done, total, label) => {
-        const pct = total > 0 ? Math.round(done / total * 100) : 0;
-        document.getElementById('prog-fill').style.width = pct + "%";
-        document.getElementById('prog-text').innerText = label + ": " + done + " / " + total;
-    };
     document.getElementById('prog-container').style.display = 'block';
+    logBox.innerText = "⚙️ 调集本地多线程矩阵优化求解器...\n";
+    let lut = null;
+    try {
+        logBox.innerText += "🧵 构建理论 LUT…\n";
+        lut = await buildLutAsync();
+        const totalPts = blocks.reduce((s, b) => s + b.points.length, 0);
+        logBox.innerText += "🧵 LUT 就绪 (" + (lut.hi - lut.lo + 1) + " 厚度 × 401 波长)，" +
+            (blocks.length > 1 ? blocks.length + " 片、共 " + totalPts + " 点顺序反演…\n" : "多路并行反演中…\n");
 
-    const workerURL = URL.createObjectURL(new Blob([dynamicWorkerCodeBlob], { type: 'application/javascript' }));
-    const K = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, batchPoints.length));
-    logBox.innerText += "🧵 构建理论 LUT，随后以 " + K + " 个 Worker 并行反演…\n";
-
-    const lutWorker = new Worker(workerURL);
-    lutWorker.postMessage({ mode: 'lut', currentLayers, minBound: minB, maxBound: maxB, fitIdx, constants: Grid.getConstants() });
-    lutWorker.onmessage = function(e) {
-        if (e.data.type === 'lut-progress') { setProgress(e.data.done, e.data.total, '构建 LUT'); return; }
-        if (e.data.type !== 'lut-done') return;
-        lutWorker.terminate();
-        const lutSpec = e.data.lutSpec, lutLab = e.data.lutLab, lo = e.data.minBound, hi = e.data.maxBound;
-        logBox.innerText += "🧵 LUT 就绪 (" + (hi - lo + 1) + " 厚度 × 401 波长)，" + K + " 路并行反演中…\n";
-
-        const chunks = [];
-        const per = Math.ceil(batchPoints.length / K);
-        for (let w = 0; w < K; w++) {
-            const start = w * per;
-            if (start >= batchPoints.length) break;
-            chunks.push({ start: start, points: batchPoints.slice(start, Math.min(start + per, batchPoints.length)) });
+        if (blocks.length === 1 && !blocks[0].meta.wafer) {
+            // 单片：保持原有行为（进主视图，不自动入库）
+            batchPoints = blocks[0].points;
+            logBox.innerText += "📥 数据解析成功: " + batchPoints.length + " 点 (" + blocks[0].formatDesc + ")。\n";
+            if (blocks[0].note) logBox.innerText += blocks[0].note + "\n";
+            const results = await fitPointsWithLut(lut, batchPoints, '已处理');
+            URL.revokeObjectURL(lut.workerURL); lut = null;
+            finalizeBatchFit(results);
+            return;
         }
-        const progByWorker = new Array(chunks.length).fill(0);
-        const merged = new Array(batchPoints.length);
-        let doneWorkers = 0;
-        chunks.forEach((chunk, wi) => {
-            const w = new Worker(workerURL);
-            w.postMessage({
-                mode: 'fit', workerId: wi, points: chunk.points,
-                lutSpec: lutSpec, lutLab: lutLab, minBound: lo, maxBound: hi, fitIdx: fitIdx,
-                currentLayers: currentLayers, constants: Grid.getConstants(), deltaEThresh: maxDeConfig,
-                jointA: jointA
-            });
-            w.onmessage = function(ev) {
-                if (ev.data.type === 'progress') {
-                    progByWorker[wi] = ev.data.done;
-                    setProgress(progByWorker.reduce((a, b) => a + b, 0), batchPoints.length, '已处理');
-                } else if (ev.data.type === 'done') {
-                    ev.data.results.forEach((pt, j) => { merged[chunk.start + j] = pt; });
-                    w.terminate();
-                    if (++doneWorkers === chunks.length) {
-                        URL.revokeObjectURL(workerURL);
-                        finalizeBatchFit(merged);
-                    }
-                }
+        // 多片批量：逐片反演并自动入库
+        const gmeta = getWaferMeta();
+        const firstNewIdx = waferLib.length;
+        for (let bi = 0; bi < blocks.length; bi++) {
+            const blk = blocks[bi];
+            const wtag = blk.meta.wafer || ('W' + String(bi + 1).padStart(2, '0'));
+            const meta = {
+                lot: blk.meta.lot || gmeta.lot,
+                wafer: wtag,
+                tool: blk.meta.tool || gmeta.tool,
+                recipe: blk.meta.recipe || gmeta.recipe,
+                time: new Date().toLocaleString()
             };
-            w.onerror = function(err) { w.terminate(); showImportError('Worker 反演异常: ' + (err.message || err)); };
-        });
-    };
-    lutWorker.onerror = function(err) { lutWorker.terminate(); showImportError('LUT 构建异常: ' + (err.message || err)); };
+            logBox.innerText += "\n▶ [" + (bi + 1) + "/" + blocks.length + "] " + wtag + "（" + blk.points.length + " 点）反演中…\n";
+            const results = await fitPointsWithLut(lut, blk.points, wtag + ' 已处理');
+            const entry = addWaferToLib(meta, results);
+            if (entry) {
+                const s = libStats(entry);
+                logBox.innerText += "✔ " + waferLabel(entry) + "：均值 " + s.avg.toFixed(2) + " nm，极差 " + s.range.toFixed(2) + "，Cpk " + s.cpk.toFixed(2) + "\n";
+            }
+        }
+        URL.revokeObjectURL(lut.workerURL); lut = null;
+        document.getElementById('prog-container').style.display = 'none';
+        renderLibList(); drawLotTrend(); refreshCmpSelects(); persistLib();
+        logBox.innerText += "\n✅ " + blocks.length + " 片全部反演并入库完成。";
+        if (waferLib.length > firstNewIdx) { loadWaferFromLib(firstNewIdx); }
+    } catch(err) {
+        if (lut) { try { URL.revokeObjectURL(lut.workerURL); } catch (e) {} }
+        document.getElementById('prog-container').style.display = 'none';
+        showImportError(err.message);
+    }
 });
 
 function finalizeBatchFit(results) {
@@ -1352,20 +1437,25 @@ function cpkColor(cpk) {
     return cpk >= 1.33 ? '#34c759' : (cpk >= 1.0 ? '#ff9f0a' : '#ff3b30');
 }
 
-function saveWaferToLib() {
-    const fitted = batchPoints.filter(p => Number.isFinite(p.fitD) && p.fitD !== 0);
-    if (fitted.length === 0) {
-        document.getElementById('log-box').innerText += '\n⚠️ 请先导入数据并运行反演，再保存到 Wafer 库。';
-        return;
-    }
-    const meta = getWaferMeta();
+function addWaferToLib(meta, points) {
+    const fitted = points.filter(p => Number.isFinite(p.fitD) && p.fitD !== 0);
+    if (!fitted.length) return null;
     if (!meta.wafer) meta.wafer = 'W' + String(waferLib.length + 1).padStart(2, '0');
-    const entry = { meta: meta, pts: fitted.map(slimPoint), full: batchPoints.slice() };
+    const entry = { meta: meta, pts: fitted.map(slimPoint), full: points.slice() };
     const dup = waferLib.findIndex(w => w.meta.lot === meta.lot && w.meta.wafer === meta.wafer);
     if (dup >= 0) { waferLib[dup] = entry; }
     else { waferLib.push(entry); }
+    return entry;
+}
+
+function saveWaferToLib() {
+    if (!batchPoints.some(p => Number.isFinite(p.fitD) && p.fitD !== 0)) {
+        document.getElementById('log-box').innerText += '\n⚠️ 请先导入数据并运行反演，再保存到 Wafer 库。';
+        return;
+    }
+    const entry = addWaferToLib(getWaferMeta(), batchPoints);
     renderLibList(); drawLotTrend(); refreshCmpSelects(); persistLib();
-    document.getElementById('log-box').innerText += '\n💾 已保存 ' + waferLabel(entry) + '（' + fitted.length + ' 点）到 Wafer 库。';
+    document.getElementById('log-box').innerText += '\n💾 已保存 ' + waferLabel(entry) + '（' + entry.pts.length + ' 点）到 Wafer 库。';
 }
 
 function loadWaferFromLib(i) {
@@ -1411,12 +1501,30 @@ function drawLotTrend() {
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
+    const sumEl = document.getElementById('trend-group-summary');
+    if (sumEl) sumEl.innerHTML = '';
     const rows = waferLib.map(w => ({ w: w, s: libStats(w) })).filter(r => r.s);
     if (!rows.length) {
         ctx.fillStyle = '#4a4a55'; ctx.font = '11px system-ui'; ctx.textAlign = 'center';
         ctx.fillText('库为空，暂无趋势', W / 2, H / 2);
         return;
     }
+    // 分组：不分组 / 按机台 / 按 Lot
+    const groupBy = (document.getElementById('trend-group') || {}).value || 'none';
+    const keyOf = (r) => groupBy === 'tool' ? (r.w.meta.tool || '未标注机台')
+        : groupBy === 'lot' ? (r.w.meta.lot || '未标注Lot') : '';
+    const palette = ['#4a9eff', '#ff9f0a', '#34c759', '#ff3b30', '#bf5af2', '#64d2ff', '#ffd60a', '#ff6482'];
+    const groups = [];
+    if (groupBy === 'none') {
+        groups.push({ key: '', rows: rows, color: '#e0e0e0' });
+    } else {
+        const map = new Map();
+        rows.forEach(r => { const k = keyOf(r); if (!map.has(k)) map.set(k, []); map.get(k).push(r); });
+        let ci = 0;
+        map.forEach((grows, k) => groups.push({ key: k, rows: grows, color: palette[ci++ % palette.length] }));
+    }
+    const grouped = groups.length > 1;
+
     const lsl = parseFloat(document.getElementById('spc-lsl')?.value) || 0;
     const usl = parseFloat(document.getElementById('spc-usl')?.value) || 1000;
     const plots = [
@@ -1442,14 +1550,23 @@ function drawLotTrend() {
             ctx.beginPath(); ctx.moveTo(30, yAt(rv)); ctx.lineTo(W - 6, yAt(rv)); ctx.stroke();
             ctx.setLineDash([]);
         });
-        // 折线
-        ctx.strokeStyle = '#e0e0e0'; ctx.lineWidth = 1.2; ctx.beginPath();
-        rows.forEach((r, i) => { const x = xAt(i), y = yAt(pl.get(r)); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-        ctx.stroke();
-        rows.forEach((r, i) => {
-            const x = xAt(i), y = yAt(pl.get(r));
-            ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = cpkColor(r.s.cpk); ctx.fill();
+        // 分组折线：每组一种颜色；点颜色=分组色（分组时）或 Cpk 状态（不分组时）
+        groups.forEach(g => {
+            ctx.strokeStyle = g.color; ctx.lineWidth = 1.2; ctx.beginPath();
+            let started = false;
+            rows.forEach((r, i) => {
+                if (g.rows.indexOf(r) < 0) return;
+                const x = xAt(i), y = yAt(pl.get(r));
+                if (started) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+                started = true;
+            });
+            ctx.stroke();
+            rows.forEach((r, i) => {
+                if (g.rows.indexOf(r) < 0) return;
+                const x = xAt(i), y = yAt(pl.get(r));
+                ctx.beginPath(); ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = grouped ? g.color : cpkColor(r.s.cpk); ctx.fill();
+            });
         });
     });
     // X 轴标签
@@ -1458,7 +1575,28 @@ function drawLotTrend() {
     rows.forEach((r, i) => {
         if (i % step === 0 || i === n - 1) ctx.fillText(r.w.meta.wafer || ('#' + (i + 1)), xAt(i), H - 3);
     });
+    // 分组图例 + 汇总（chamber matching 一眼看差异）
+    if (grouped) {
+        ctx.font = '8px system-ui'; ctx.textAlign = 'right';
+        let ly = 12;
+        groups.forEach(g => {
+            ctx.fillStyle = g.color;
+            ctx.fillText('\u25CF ' + g.key + ' (n=' + g.rows.length + ')', W - 6, ly);
+            ly += 10;
+        });
+        if (sumEl) {
+            sumEl.innerHTML = groups.map(g => {
+                const avgs = g.rows.map(r => r.s.avg);
+                const mean = avgs.reduce((a, b) => a + b, 0) / avgs.length;
+                const mcpk = g.rows.map(r => r.s.cpk).reduce((a, b) => a + b, 0) / g.rows.length;
+                return '<span style="color:' + g.color + '">\u25CF</span> ' + escHtml(g.key) +
+                    '：n=' + g.rows.length + '，片均值 ' + mean.toFixed(2) + ' nm，平均 Cpk ' + mcpk.toFixed(2);
+            }).join('<br>');
+        }
+    }
 }
+
+document.getElementById('trend-group').addEventListener('change', drawLotTrend);
 
 function refreshCmpSelects() {
     ['cmp-a', 'cmp-b'].forEach((id, k) => {
@@ -1692,7 +1830,7 @@ function buildReportHtml() {
         '.meta{color:#555;font-size:0.85rem}.kpi{display:flex;gap:16px;flex-wrap:wrap}.kpi div{background:#f6f6f6;border:1px solid #ddd;border-radius:6px;padding:8px 14px}' +
         '.kpi b{font-size:1.15rem}@media print{.noprint{display:none}}</style></head><body>' +
         '<h1>ThinFilm-Vision 检测报告</h1>' +
-        '<p class="meta">生成时间：' + escHtml(time) + '　|　工具版本：V4.7　|　点位数：' + pts.length + '（参与统计 ' + (s ? s.n : 0) + '）</p>' +
+        '<p class="meta">生成时间：' + escHtml(time) + '　|　工具版本：V4.8　|　点位数：' + pts.length + '（参与统计 ' + (s ? s.n : 0) + '）</p>' +
         (wmTxt ? '<p class="meta">晶圆信息：' + escHtml(wmTxt) + '</p>' : '') +
         '<h2>SPC 汇总</h2><div class="kpi">' +
         (s ? '<div>均值<br><b>' + s.avg.toFixed(2) + ' nm</b></div><div>极差<br><b>' + s.range.toFixed(2) + ' nm</b></div>' +
